@@ -29,6 +29,7 @@ const state = {
   teams: [],
   matches: [],
   user: null,
+  live: false,
   division: DIVISIONS[store.get('division')] ? store.get('division') : 'competitive',
   section: SECTIONS[store.get('section')] ? store.get('section') : 'rankings',
   myTeam: store.get('myTeam', ''),
@@ -158,7 +159,11 @@ function renderHeader() {
           <span class="brand-icon" aria-hidden="true">🏓</span>
           <div>
             <h1>桌球雙打賽即時計分</h1>
-            <p class="live"><span class="dot" aria-hidden="true"></span>比分自動即時更新</p>
+            ${
+              state.live
+                ? `<p class="live"><span class="dot" aria-hidden="true"></span>比分自動即時更新</p>`
+                : `<p class="live off"><span class="dot" aria-hidden="true"></span>重新連線中，每 15 秒自動更新</p>`
+            }
           </div>
         </div>
         ${
@@ -854,7 +859,21 @@ async function init() {
     render();
   });
   await reload();
-  backend.subscribe(scheduleReload);
+  backend.subscribe(scheduleReload, (status) => {
+    const live = status === 'SUBSCRIBED';
+    // 每次（重新）連上都重抓一次，補上斷線期間錯過的更新
+    if (live) scheduleReload();
+    if (live !== state.live) {
+      state.live = live;
+      requestRender();
+    }
+  });
+  // 備援：即時連線正常時每 60 秒、中斷時每 15 秒自動重抓（畫面在背景時暫停）
+  const poll = () => {
+    if (!document.hidden) scheduleReload();
+    setTimeout(poll, state.live ? 60000 : 15000);
+  };
+  setTimeout(poll, 15000);
   // 手機螢幕關掉再打開時，重新抓一次最新資料
   document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleReload(); });
 }

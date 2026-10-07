@@ -66,6 +66,7 @@ main.container { padding: 16px 0 48px; }
 .brand h1 { margin: 0; font-size: 18px; line-height: 1.2; }
 .live { margin: 2px 0 0; font-size: 12px; opacity: .85; display: flex; align-items: center; gap: 6px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 0 0 rgba(74, 222, 128, .7); animation: pulse 2s infinite; }
+.live.off .dot { background: #fbbf24; animation: none; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 7px rgba(74, 222, 128, 0); } 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); } }
 .who { display: flex; align-items: center; gap: 8px; }
 .topbar .btn { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .35); color: #fff; }

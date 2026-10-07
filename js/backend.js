@@ -55,12 +55,14 @@ async function createSupabaseBackend() {
         matches: check(matches),
       };
     },
-    subscribe(onChange) {
+    // onStatus 會在每次連上（包含斷線後自動重連）時收到 'SUBSCRIBED'，
+    // 斷線時收到 'CHANNEL_ERROR' / 'TIMED_OUT' / 'CLOSED'
+    subscribe(onChange, onStatus = () => {}) {
       const channel = sb.channel('tournament');
       for (const table of ['settings', 'teams', 'matches']) {
         channel.on('postgres_changes', { event: '*', schema: 'public', table }, onChange);
       }
-      channel.subscribe();
+      channel.subscribe((status) => onStatus(status));
       return () => sb.removeChannel(channel);
     },
 
@@ -152,8 +154,9 @@ function createDemoBackend() {
     async load() {
       return clone(db);
     },
-    subscribe(onChange) {
+    subscribe(onChange, onStatus = () => {}) {
       dataListeners.add(onChange);
+      setTimeout(() => onStatus('SUBSCRIBED'), 0);
       return () => dataListeners.delete(onChange);
     },
     async getUser() {
