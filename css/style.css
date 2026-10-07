@@ -191,8 +191,11 @@ button.match:hover { border-color: var(--brand-2); }
 .side.won { font-weight: 800; color: var(--ok); }
 .side.won .name::after { content: " ✓"; }
 .side.me .name { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
-.games { display: flex; flex-wrap: wrap; gap: 4px; }
-.game { font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--bg); color: var(--sub); }
+.side .name { flex: 1; }
+.pts { display: flex; gap: 2px; }
+.pt { min-width: 26px; text-align: center; font-size: 14px; font-weight: 500; color: var(--sub); font-variant-numeric: tabular-nums; }
+.pt.w { color: var(--text); font-weight: 800; }
+.side .score { border-left: 1px solid var(--line); padding-left: 8px; }
 .edit-hint { font-size: 13px; color: var(--accent); font-weight: 700; }
 
 /* ---------- 名單 ---------- */
@@ -221,10 +224,17 @@ textarea { resize: vertical; }
 .score-total { font-size: 30px; font-variant-numeric: tabular-nums; color: var(--brand-2); }
 .score-hint { margin: 0; font-size: 13px; color: var(--sub); }
 .game-rows { display: grid; gap: 8px; }
-.game-row { display: grid; grid-template-columns: 56px 1fr 1fr; gap: 8px; align-items: center; }
+.game-row { display: grid; grid-template-columns: 56px 1fr auto 1fr; gap: 8px; align-items: center; }
+.game-row[hidden] { display: none; }
 .game-label { font-size: 13px; color: var(--sub); font-weight: 700; }
-.pick { min-height: 52px; padding: 6px 8px; border: 2px solid var(--line); border-radius: 12px; background: var(--card); font-weight: 700; cursor: pointer; font-size: 14px; overflow-wrap: anywhere; }
-.pick.on { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+.pt-input { width: 100%; min-height: 52px; text-align: center; font-size: 22px; font-weight: 800; border: 2px solid var(--line); border-radius: 12px; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+.pt-input::-webkit-outer-spin-button, .pt-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.game-row.w1 .pt-input[data-side="0"], .game-row.w2 .pt-input[data-side="1"] { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+.colon { font-weight: 800; color: var(--sub); }
+.row-note { grid-column: 2 / -1; font-size: 13px; font-weight: 700; margin-top: -4px; }
+.row-note:empty { display: none; }
+.row-note.warn { color: var(--warn); }
+.row-note.bad { color: var(--bad); }
 .score-result { margin: 0; min-height: 1.5em; font-size: 15px; }
 
 /* ---------- 提示訊息 ---------- */

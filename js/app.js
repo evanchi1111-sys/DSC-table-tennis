@@ -1,7 +1,7 @@
 import { ORGANIZER_EMAIL } from './config.js';
 import { createBackend, isConfigured } from './backend.js';
 import { generateRoundRobin } from './scheduler.js';
-import { computeRankings } from './ranking.js';
+import { computeRankings, gamesWon, gameWinner } from './ranking.js';
 import { exportExcel, printReport } from './export.js';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
@@ -51,7 +51,12 @@ const teamName = (id) => {
 const isOrganizer = () => !!state.user && (state.user.email || '').toLowerCase() === ORGANIZER_EMAIL.toLowerCase();
 const isSetup = () => state.settings.status !== 'active';
 const formatOf = (m) => FORMATS[m?.match_format] || FORMATS[state.settings.match_format] || FORMATS.best_of_3;
-const gamesWon = (games, side) => (games || []).filter((g) => g === side).length;
+// 桌球 11 分制：先得 11 分且領先 2 分；10:10 之後要領先 2 分
+const isStandardGame = (a, b) => {
+  const hi = Math.max(a, b);
+  const lo = Math.min(a, b);
+  return hi === 11 ? lo <= 9 : hi > 11 && hi - lo === 2;
+};
 const statusLabel = (m) => ({ completed: '已完賽', playing: '進行中', not_started: '未開始' })[m.status] || '未開始';
 const divisionMatches = (division) => state.matches.filter((m) => m.division === division);
 
@@ -264,7 +269,7 @@ function renderRankings(rankings) {
     ${needDraw && org ? `<div class="banner warn">有隊伍戰績完全相同，請抽籤後在「抽籤」欄填入順位。</div>` : ''}
     <div class="table-wrap">
       <table class="rank-table">
-        <thead><tr><th>名次</th><th class="left">隊伍</th><th>勝</th><th>敗</th><th>局數</th><th class="left hide-sm">判定依據</th></tr></thead>
+        <thead><tr><th>名次</th><th class="left">隊伍</th><th>勝</th><th>敗</th><th>局數</th><th class="hide-sm">得失分</th><th class="left hide-sm">判定依據</th></tr></thead>
         <tbody>
           ${rankings
             .map((s) => {
@@ -286,6 +291,7 @@ function renderRankings(rankings) {
                   <td>${s.wins}</td>
                   <td>${s.losses}</td>
                   <td class="nowrap">${s.gamesWon}:${s.gamesLost}</td>
+                  <td class="nowrap hide-sm">${s.pointsWon}:${s.pointsLost}</td>
                   <td class="left hide-sm basis">${esc(basis)}</td>
                 </tr>`;
             })
@@ -293,7 +299,7 @@ function renderRankings(rankings) {
         </tbody>
       </table>
     </div>
-    <p class="note">排名規則：勝場數 → 兩隊同分看對戰勝負；三隊以上同分比彼此間的局數比 → 全賽局數比 → 抽籤。</p>`;
+    <p class="note">排名規則：勝場數多者在前。兩隊同勝場看兩隊對戰勝負；三隊以上同勝場，只計算彼此之間的對戰，依序比 場數勝率 → 局數勝率 → 分數勝率 → 抽籤。</p>`;
 }
 
 function renderMatches() {
@@ -328,22 +334,21 @@ function matchCard(m, mine, org) {
   const w1 = gamesWon(m.games, 1);
   const w2 = gamesWon(m.games, 2);
   const isMine = mine && (m.team1_id === mine || m.team2_id === mine);
-  const side = (id, wins) => `
+  const games = m.games || [];
+  // 每隊一列：隊名、各局得分（贏的局加粗）、總局數
+  const side = (id, wins, idx) => `
     <span class="side ${m.winner_id === id ? 'won' : ''} ${id === mine ? 'me' : ''}">
       <span class="name">${esc(teamName(id))}</span>
+      <span class="pts">${games.map((g) => `<span class="pt ${gameWinner(g) === idx + 1 ? 'w' : ''}">${Number(g[idx])}</span>`).join('')}</span>
       <span class="score">${m.status === 'not_started' ? '' : wins}</span>
     </span>`;
-  const chips = (m.games || [])
-    .map((g, i) => `<span class="game g${g}" title="第 ${i + 1} 局">${i + 1}局 ${g === 1 ? '▲' : '▼'}</span>`)
-    .join('');
   const tag = org ? 'button' : 'div';
   const attrs = org ? `data-action="open-match" data-id="${m.id}" type="button" aria-label="輸入比分：${esc(teamName(m.team1_id))} 對 ${esc(teamName(m.team2_id))}"` : '';
   return `
     <${tag} class="match ${m.status} ${isMine ? 'mine' : ''}" ${attrs}>
       <span class="match-top"><span class="status-badge ${m.status}">${statusLabel(m)}</span><span class="fmt">${formatOf(m).label}</span></span>
-      ${side(m.team1_id, w1)}
-      ${side(m.team2_id, w2)}
-      ${chips ? `<span class="games" aria-label="各局勝方（▲上方隊伍 ▼下方隊伍）">${chips}</span>` : ''}
+      ${side(m.team1_id, w1, 0)}
+      ${side(m.team2_id, w2, 1)}
       ${org ? `<span class="edit-hint">${m.status === 'not_started' ? '點此輸入比分' : '點此修改比分'}</span>` : ''}
     </${tag}>`;
 }
@@ -457,7 +462,7 @@ function openModal(html, onReady) {
     if (e.target === backdrop || e.target.closest('[data-close]')) close();
   });
   onReady(modalRoot.querySelector('.modal'), close);
-  modalRoot.querySelector('input, button:not([data-close])')?.focus();
+  if (!modalRoot.contains(document.activeElement)) modalRoot.querySelector('input, button:not([data-close])')?.focus();
 }
 
 function openLoginModal() {
@@ -557,13 +562,25 @@ function openScoreModal(match) {
   const fmt = formatOf(match);
   const name1 = teamName(match.team1_id);
   const name2 = teamName(match.team2_id);
-  let games = [...(match.games || [])];
+  const saved = (match.games || []).filter(Array.isArray);
+  const cellValue = (i, side) => (saved[i] ? String(saved[i][side]) : '');
+  const scoreInput = (i, side, label) =>
+    `<input class="pt-input" type="number" inputmode="numeric" min="0" max="99" data-game="${i}" data-side="${side}" value="${cellValue(i, side)}" aria-label="第 ${i + 1} 局 ${esc(label)} 得分">`;
 
   openModal(
     `<h2>第 ${match.round} 輪・${esc(fmt.label)}</h2>
      <div class="score-head"><span>${esc(name1)}</span><b class="score-total"></b><span>${esc(name2)}</span></div>
-     <p class="score-hint">依序點選每一局的勝方。點錯了可以直接點前面的局重新選。</p>
-     <div class="game-rows"></div>
+     <p class="score-hint">輸入每一局兩隊的得分（例如 11 : 8），勝方會自動判定。</p>
+     <div class="game-rows">
+       ${Array.from({ length: fmt.games }, (_, i) => `
+         <div class="game-row" data-row="${i}">
+           <span class="game-label">第 ${i + 1} 局</span>
+           ${scoreInput(i, 0, name1)}
+           <span class="colon">:</span>
+           ${scoreInput(i, 1, name2)}
+           <span class="row-note" aria-live="polite"></span>
+         </div>`).join('')}
+     </div>
      <p class="score-result"></p>
      <div class="modal-actions">
        <button type="button" class="btn" data-clear>清除比分</button>
@@ -571,34 +588,80 @@ function openScoreModal(match) {
        <button type="button" class="btn primary" data-save>儲存</button>
      </div>`,
     (modal, close) => {
-      const rows = modal.querySelector('.game-rows');
+      const rowEls = [...modal.querySelectorAll('.game-row')];
+      const read = (i) => {
+        const [a, b] = rowEls[i].querySelectorAll('.pt-input');
+        const filled = a.value !== '' && b.value !== '';
+        return { a: Number(a.value), b: Number(b.value), filled, empty: a.value === '' && b.value === '' };
+      };
+      // 從第一局往後讀，直到遇到未完成的局或已分出勝負
+      const evaluate = () => {
+        const games = [];
+        let problem = null;
+        let w1 = 0;
+        let w2 = 0;
+        for (let i = 0; i < fmt.games && w1 < fmt.wins && w2 < fmt.wins; i++) {
+          const r = read(i);
+          if (r.empty) break;
+          const valid = r.filled && Number.isInteger(r.a) && Number.isInteger(r.b) && r.a >= 0 && r.b >= 0 && r.a !== r.b;
+          if (!valid) {
+            problem = { i, message: r.filled && r.a === r.b ? '同分無法判定勝方' : '請填完兩隊得分' };
+            break;
+          }
+          games.push([r.a, r.b]);
+          if (r.a > r.b) w1++;
+          else w2++;
+        }
+        return { games, problem, w1, w2, decided: w1 >= fmt.wins || w2 >= fmt.wins };
+      };
       const draw = () => {
-        const w1 = gamesWon(games, 1);
-        const w2 = gamesWon(games, 2);
-        const decided = w1 >= fmt.wins || w2 >= fmt.wins;
+        const { games, problem, w1, w2, decided } = evaluate();
         const visible = Math.min(fmt.games, decided ? games.length : games.length + 1);
-        rows.innerHTML = Array.from({ length: visible }, (_, i) => `
-          <div class="game-row">
-            <span class="game-label">第 ${i + 1} 局</span>
-            <button type="button" class="pick ${games[i] === 1 ? 'on' : ''}" data-game="${i}" data-side="1" aria-pressed="${games[i] === 1}">${esc(name1)}</button>
-            <button type="button" class="pick ${games[i] === 2 ? 'on' : ''}" data-game="${i}" data-side="2" aria-pressed="${games[i] === 2}">${esc(name2)}</button>
-          </div>`).join('');
+        rowEls.forEach((row, i) => {
+          row.hidden = i >= visible;
+          const note = row.querySelector('.row-note');
+          const g = games[i];
+          row.classList.toggle('w1', !!g && g[0] > g[1]);
+          row.classList.toggle('w2', !!g && g[1] > g[0]);
+          if (problem && problem.i === i) {
+            note.textContent = problem.message;
+            note.className = 'row-note bad';
+          } else if (g && !isStandardGame(g[0], g[1])) {
+            note.textContent = '非 11 分制比分，請再確認';
+            note.className = 'row-note warn';
+          } else {
+            note.textContent = '';
+            note.className = 'row-note';
+          }
+        });
         modal.querySelector('.score-total').textContent = `${w1} : ${w2}`;
         modal.querySelector('.score-result').innerHTML = decided
           ? `🏆 勝方：<b>${esc(w1 > w2 ? name1 : name2)}</b>`
-          : games.length ? '比賽進行中，可先儲存目前局數。' : '';
+          : games.length ? '比賽進行中，可先儲存目前比分。' : '';
       };
-      rows.addEventListener('click', (e) => {
-        const btn = e.target.closest('.pick');
-        if (!btn) return;
-        const i = Number(btn.dataset.game);
-        games = [...games.slice(0, i), Number(btn.dataset.side)];
-        draw();
+
+      modal.querySelector('.game-rows').addEventListener('input', draw);
+      // 按 Enter 跳到下一格，方便連續輸入
+      modal.querySelector('.game-rows').addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !e.target.matches('.pt-input')) return;
+        e.preventDefault();
+        const inputs = [...modal.querySelectorAll('.game-row:not([hidden]) .pt-input')];
+        const next = inputs[inputs.indexOf(e.target) + 1];
+        if (next) next.focus();
+        else modal.querySelector('[data-save]').focus();
       });
-      modal.querySelector('[data-clear]').addEventListener('click', () => { games = []; draw(); });
+      modal.querySelector('[data-clear]').addEventListener('click', () => {
+        modal.querySelectorAll('.pt-input').forEach((input) => { input.value = ''; });
+        draw();
+        modal.querySelector('.pt-input').focus();
+      });
       modal.querySelector('[data-save]').addEventListener('click', async () => {
-        const w1 = gamesWon(games, 1);
-        const w2 = gamesWon(games, 2);
+        const { games, problem, w1, w2 } = evaluate();
+        if (problem) {
+          modal.querySelector('.score-result').innerHTML = `<span class="error">第 ${problem.i + 1} 局：${problem.message}</span>`;
+          rowEls[problem.i].querySelector('.pt-input').focus();
+          return;
+        }
         const winner = w1 >= fmt.wins ? match.team1_id : w2 >= fmt.wins ? match.team2_id : null;
         const status = winner ? 'completed' : games.length ? 'playing' : 'not_started';
         close();
@@ -606,6 +669,8 @@ function openScoreModal(match) {
         await reload();
       });
       draw();
+      const firstEmpty = [...modal.querySelectorAll('.game-row:not([hidden]) .pt-input')].find((input) => input.value === '');
+      (firstEmpty || modal.querySelector('.pt-input')).focus();
     }
   );
 }

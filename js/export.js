@@ -1,9 +1,10 @@
 // 匯出 Excel 與列印成績。report 由 app.js 組好：
 // { title, formatLabel, generatedAt, divisions: [{ label, rankings, matches }], teamName(id), statusLabel(match) }
 
+import { gamesWon } from './ranking.js';
+
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const gamesWon = (m, side) => (m.games || []).filter((g) => g === side).length;
-const gameDetail = (m, report) => (m.games || []).map((g, i) => `第${i + 1}局 ${g === 1 ? report.shortName(m.team1_id) : report.shortName(m.team2_id)}`).join('、');
+const gameDetail = (m) => (m.games || []).map((g) => `${g[0]}:${g[1]}`).join('、');
 const fileStamp = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 
 function rankingRows(division) {
@@ -14,6 +15,7 @@ function rankingRows(division) {
     勝: s.wins,
     敗: s.losses,
     局數: `${s.gamesWon} : ${s.gamesLost}`,
+    得失分: `${s.pointsWon} : ${s.pointsLost}`,
     判定依據: s.drawTied && s.team.draw_rank == null ? `${s.basis}（未抽籤）` : s.basis,
   }));
 }
@@ -23,8 +25,8 @@ function matchRows(division, report) {
     輪次: `第 ${m.round} 輪`,
     隊伍一: report.teamName(m.team1_id),
     隊伍二: report.teamName(m.team2_id),
-    局數比分: m.status === 'not_started' ? '' : `${gamesWon(m, 1)} : ${gamesWon(m, 2)}`,
-    各局勝方: gameDetail(m, report),
+    局數比分: m.status === 'not_started' ? '' : `${gamesWon(m.games, 1)} : ${gamesWon(m.games, 2)}`,
+    各局比分: gameDetail(m),
     勝方: m.winner_id ? report.teamName(m.winner_id) : '',
     狀態: report.statusLabel(m),
   }));
@@ -36,11 +38,11 @@ export function exportExcel(report) {
   const wb = XLSX.utils.book_new();
   for (const division of report.divisions) {
     const rankSheet = XLSX.utils.json_to_sheet(rankingRows(division));
-    rankSheet['!cols'] = [{ wch: 6 }, { wch: 22 }, { wch: 6 }, { wch: 5 }, { wch: 5 }, { wch: 8 }, { wch: 20 }];
+    rankSheet['!cols'] = [{ wch: 6 }, { wch: 22 }, { wch: 6 }, { wch: 5 }, { wch: 5 }, { wch: 8 }, { wch: 10 }, { wch: 20 }];
     XLSX.utils.book_append_sheet(wb, rankSheet, `${division.label}排名`);
 
     const matchSheet = XLSX.utils.json_to_sheet(matchRows(division, report));
-    matchSheet['!cols'] = [{ wch: 8 }, { wch: 22 }, { wch: 22 }, { wch: 9 }, { wch: 40 }, { wch: 22 }, { wch: 8 }];
+    matchSheet['!cols'] = [{ wch: 8 }, { wch: 22 }, { wch: 22 }, { wch: 9 }, { wch: 30 }, { wch: 22 }, { wch: 8 }];
     XLSX.utils.book_append_sheet(wb, matchSheet, `${division.label}賽程`);
   }
   XLSX.writeFile(wb, `桌球雙打賽成績_${fileStamp(report.generatedAt)}.xlsx`);

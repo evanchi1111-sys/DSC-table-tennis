@@ -34,7 +34,7 @@ create table if not exists public.matches (
   team1_id     uuid not null references public.teams(id) on delete cascade,
   team2_id     uuid not null references public.teams(id) on delete cascade,
   match_format text not null check (match_format in ('best_of_3', 'best_of_5')),
-  games        smallint[] not null default '{}',  -- 每局勝方：1 = 隊伍一，2 = 隊伍二
+  games        jsonb not null default '[]'::jsonb check (jsonb_typeof(games) = 'array'),  -- 每局比分，例如 [[11,8],[9,11]]
   winner_id    uuid references public.teams(id) on delete set null,
   status       text not null default 'not_started' check (status in ('not_started', 'playing', 'completed')),
   updated_at   timestamptz not null default now()
