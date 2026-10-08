@@ -304,7 +304,35 @@ function renderRankings(rankings) {
         </tbody>
       </table>
     </div>
-    <p class="note">排名規則：勝場數多者在前。兩隊同勝場看兩隊對戰勝負；三隊以上同勝場，只計算彼此之間的對戰，依序比 場數勝率 → 局數勝率 → 分數勝率 → 抽籤；過程中若剩兩隊同分，改看兩隊對戰勝負。</p>`;
+    ${rulesCard()}`;
+}
+
+// 給選手看的賽制與名次判定規則
+function rulesCard() {
+  const fmt = FORMATS[state.settings.match_format] || FORMATS.best_of_3;
+  return `
+    <section class="rules card" aria-labelledby="rules-title">
+      <h3 id="rules-title">📖 賽制與名次判定規則</h3>
+      <p><b>賽制：</b>雙打單循環賽，每場${fmt.label}，每局 11 分制（10:10 後需領先 2 分）。</p>
+      <ol class="rule-steps">
+        <li><b>勝場數</b>多者，名次在前。</li>
+        <li><b>兩隊勝場數相同：</b>看這兩隊之間比賽的勝負，勝者在前。
+          <small>（比賽進行中兩隊還沒交手時，暫時依序比全部比賽的局數勝率、分數勝率）</small></li>
+        <li><b>三隊以上勝場數相同（互咬）：</b>只計算這幾隊<u>彼此之間</u>的比賽，依序比：
+          <ol class="rule-sub">
+            <li><b>場數勝率</b>＝勝場數 ÷ 敗場數</li>
+            <li><b>局數勝率</b>＝勝局數 ÷ 敗局數</li>
+            <li><b>分數勝率</b>＝總得分 ÷ 總失分</li>
+          </ol>
+          比較過程中，若只剩<b>兩隊</b>數據相同，改看這兩隊之間比賽的勝負。</li>
+        <li><b>以上全部相同：</b>由主辦單位抽籤決定。</li>
+      </ol>
+      <div class="rule-example">
+        <b>例：</b>甲、乙、丙三隊都是 2 勝。彼此之間甲勝乙、乙勝丙、丙勝甲，三隊都是 1 勝 1 敗，場數勝率相同。
+        接著比三隊彼此之間的局數勝率，例如甲 5:3、丙 5:5、乙 3:5，名次就是 甲 → 丙 → 乙。
+      </div>
+      <p class="rule-foot">＊勝率計算時，沒有輸過（分母為 0）視為最高。排名表的「判定依據」欄會顯示每隊是在哪一步分出名次。只計算已完賽的比賽。</p>
+    </section>`;
 }
 
 function renderMatches() {
