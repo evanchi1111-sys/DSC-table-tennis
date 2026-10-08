@@ -5,7 +5,7 @@
 // 2. 兩隊同勝場：看兩隊直接對戰的勝負；尚未對戰則依序比全賽局數勝率、分數勝率，再抽籤。
 // 3. 三隊以上同勝場（互咬）：只計算這幾隊彼此之間的對戰，依序比
 //    第一步 場數勝率（勝場 ÷ 敗場）→ 第二步 局數勝率（勝局 ÷ 敗局）
-//    → 第三步 分數勝率（得分 ÷ 失分）→ 第四步 抽籤。
+//    → 第三步 分數勝率（得分 ÷ 失分）→ 第四步 抽籤；過程中剩兩隊同分時，改看兩隊對戰勝負。
 
 const ratio = (won, lost) => (lost === 0 ? (won > 0 ? Infinity : 1) : won / lost);
 const drawRank = (stat) => stat.team.draw_rank ?? 999;
@@ -128,28 +128,34 @@ function resolveGroup(group, completed) {
     s.mutualPointRatio = ratio(t.pointsWon, t.pointsLost);
   }
 
-  const sorted = [...group].sort((a, b) => {
-    for (const { key } of STEPS) {
-      if (a[key] !== b[key]) return a[key] > b[key] ? -1 : 1;
-    }
-    return drawRank(a) - drawRank(b);
-  });
+  return splitByStep(group, 0, completed);
+}
 
-  // 每隊標示是在第幾步被分出名次：在前面步驟都相同的隊伍中，這一步的數值是唯一的
-  for (const s of sorted) {
-    let peers = group;
-    s.basis = '';
-    for (const { key, label } of STEPS) {
-      peers = peers.filter((o) => o[key] === s[key]);
-      if (peers.length === 1) {
-        s.basis = label;
-        break;
-      }
-    }
-    if (!s.basis) {
-      s.drawTied = true;
-      s.basis = '戰績相同・抽籤';
+// 依第 step 步把仍同分的隊伍分組，數值高的在前，每組再往下一步比。
+// 某一步比完剛好剩兩隊同分時，改看這兩隊的對戰勝負（兩隊還沒交手才繼續比下一步）。
+function splitByStep(members, step, completed) {
+  if (members.length === 1) return members;
+  if (members.length === 2 && step > 0) {
+    const [a, b] = members;
+    const h2h = completed.find(
+      (m) => (m.team1_id === a.team.id && m.team2_id === b.team.id) || (m.team1_id === b.team.id && m.team2_id === a.team.id)
+    );
+    if (h2h && (h2h.winner_id === a.team.id || h2h.winner_id === b.team.id)) {
+      a.basis = b.basis = '互咬・剩兩隊看對戰勝負';
+      return h2h.winner_id === a.team.id ? [a, b] : [b, a];
     }
   }
-  return sorted;
+  if (step >= STEPS.length) {
+    members.forEach((s) => { s.drawTied = true; s.basis = '戰績相同・抽籤'; });
+    return [...members].sort((a, b) => drawRank(a) - drawRank(b));
+  }
+  const { key, label } = STEPS[step];
+  const values = [...new Set(members.map((s) => s[key]))].sort((x, y) => y - x);
+  const result = [];
+  for (const v of values) {
+    const part = members.filter((s) => s[key] === v);
+    if (part.length === 1) part[0].basis = label;
+    result.push(...splitByStep(part, step + 1, completed));
+  }
+  return result;
 }
