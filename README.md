@@ -1,5 +1,7 @@
 # 🏓 桌球雙打賽即時計分
 
+**網站**：<https://evanchi1111-sys.github.io/DSC-table-tennis/>
+
 桌球雙打單循環賽的計分網站：主辦單位輸入比分，選手用手機即時看到賽程、比分與排名。
 
 - 兩個組別：競賽組、歡樂成長組
@@ -70,3 +72,17 @@
 | `js/ranking.js` | 排名與同分判定 |
 | `js/export.js` | 匯出 Excel、列印 |
 | `supabase/setup.sql` | 資料表、安全規則、即時同步設定 |
+
+## 桌球賽事系列
+同一個 Supabase 專案可共用，各系統資料表前綴不同。
+
+| 系統 | 用途 | 網站 |
+|---|---|---|
+| [DSC-table-tennis](https://github.com/evanchi1111-sys/DSC-table-tennis) | 雙打單循環即時計分 | <https://evanchi1111-sys.github.io/DSC-table-tennis/> |
+| [singles-tournament](https://github.com/evanchi1111-sys/singles-tournament) | 單打賽（單淘汰、雙淘汰、分組循環＋總決賽） | <https://evanchi1111-sys.github.io/singles-tournament/> |
+| [team-lineup](https://github.com/evanchi1111-sys/team-lineup) | 團體賽秘密排點與即時比分 | <https://evanchi1111-sys.github.io/team-lineup/> |
+| [tabletennis-prize](https://github.com/evanchi1111-sys/tabletennis-prize) | 獎品採購金額分配 | <https://evanchi1111-sys.github.io/tabletennis-prize/> |
+
+## 授權
+
+以 [MIT 授權](LICENSE) 釋出，Copyright (c) 2026 evanchi1111-sys。
