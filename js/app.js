@@ -1,5 +1,5 @@
 import { ORGANIZER_EMAIL } from './config.js';
-import { createBackend, isConfigured } from './backend.js?v=20261029n';
+import { createBackend, isConfigured } from './backend.js?v=20261029o';
 import { generateRoundRobin } from './scheduler.js';
 import { computeRankings, gamesWon, gameWinner } from './ranking.js';
 import { exportExcel, printReport } from './export.js';
