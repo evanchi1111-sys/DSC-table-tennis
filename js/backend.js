@@ -92,9 +92,6 @@ async function createSupabaseBackend() {
       if (error) throw friendlyError(error);
     },
 
-    // 選手資料庫（單位、頭銜、照片），三個系統共用
-    async savePerson(name, patch) { await people.save(name, patch); },
-    uploadPhoto(blob) { return people.upload(blob); },
     async addTeams(rows) {
       check(await sb.from('teams').insert(rows));
     },
@@ -151,7 +148,7 @@ function createDemoBackend() {
     })),
     matches: [],
   };
-  let user = null;
+  let user = (() => { try { return sessionStorage.getItem('demo_organizer') ? { email: ORGANIZER_EMAIL } : null; } catch { return null; } })(); // 示範模式：同一個分頁切換系統時保留主辦登入
   const dataListeners = new Set();
   const authListeners = new Set();
   const emit = () => setTimeout(() => dataListeners.forEach((fn) => fn()), 50);
@@ -180,19 +177,17 @@ function createDemoBackend() {
     },
     async signIn(email, password) {
       if (email.toLowerCase() !== ORGANIZER_EMAIL.toLowerCase() || password !== DEMO_PASSWORD) throw new Error('帳號或密碼錯誤');
-      user = { email: ORGANIZER_EMAIL };
+      user = { email: ORGANIZER_EMAIL }; try { sessionStorage.setItem('demo_organizer', '1'); } catch { /* 忽略 */ }
       authListeners.forEach((fn) => fn(user));
     },
     async signOut() {
       user = null;
+      try { sessionStorage.removeItem('demo_organizer'); } catch { /* 忽略 */ }
       authListeners.forEach((fn) => fn(null));
     },
     async changePassword() {
       throw new Error('示範模式無法變更密碼');
     },
-    // 選手資料庫（示範模式：只存在記憶體）
-    async savePerson(name, patch) { requireOrganizer(); await peopleDemo.save(name, patch); emit(); },
-    uploadPhoto(blob) { return peopleDemo.upload(blob); },
     async addTeams(rows) {
       requireOrganizer();
       rows.forEach((r, i) => db.teams.push({ id: uid(), draw_rank: null, created_at: new Date(Date.now() + i).toISOString(), ...r }));

@@ -1,9 +1,9 @@
 import { ORGANIZER_EMAIL } from './config.js';
-import { createBackend, isConfigured } from './backend.js?v=20261029h';
+import { createBackend, isConfigured } from './backend.js?v=20261029j';
 import { generateRoundRobin } from './scheduler.js';
 import { computeRankings, gamesWon, gameWinner } from './ranking.js';
 import { exportExcel, printReport } from './export.js';
-import { avatar, titleChip, openPersonEditor, profileOf } from './people.js';
+import { avatar, titleChip, profileOf } from './people.js';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
 const FORMATS = {
@@ -468,7 +468,6 @@ function renderTeams() {
                 <div class="tcard-top">
                   <span class="idx">${i + 1}</span>
                   <span class="row-actions" style="margin-left:auto">
-                    ${isOrganizer() ? `<button class="btn small" data-action="edit-profile" data-id="${t.id}">編輯資料</button>` : ''}
                     ${editable ? `<button class="btn small" data-action="edit-team" data-id="${t.id}">修改</button>
                          <button class="btn small danger" data-action="delete-team" data-id="${t.id}" ${busy}>刪除</button>` : ''}
                   </span>
@@ -607,34 +606,17 @@ function openTeamModal(team) {
   );
 }
 
-// 編輯一位選手的單位、頭銜、照片（存到共用的選手資料庫）
-function openPersonEdit(team, side) {
-  const p = personOf(team, side);
-  openPersonEditor({
-    openModal,
-    person: p,
-    onSave: ({ unit, title, blob, removed }) => run(async () => {
-      let photo_url = p.photo_url || null;
-      if (blob) photo_url = await backend.uploadPhoto(blob);
-      else if (removed) photo_url = null;
-      await backend.savePerson(p.name, { unit, title, photo_url });
-    }, '選手資料已儲存'),
-  });
-}
-
 // 隊伍檔案：兩位選手的資料加上這一組的戰績
 function openTeamProfile(teamId, focusSide) {
   const t = teamById(teamId);
   if (!t) return;
   const s = computeRankings(state.teams, state.matches, t.division).find((x) => x.team.id === t.id);
   const played = state.matches.filter((m) => (m.team1_id === t.id || m.team2_id === t.id) && m.status !== 'not_started');
-  const org = isOrganizer();
   const tile = (side) => {
     const p = personOf(t, side);
     return `<div class="person static ${focusSide === side ? 'focus' : ''}">
       <span class="person-photo">${avatar(p, 'cover')}</span>
       <b>${esc(p.name)}</b><small>${esc(p.unit || '（未填單位）')}</small>${titleChip(p.title)}
-      ${org ? `<button type="button" class="btn small" data-edit="${side}">✎ 編輯</button>` : ''}
     </div>`;
   };
   openModal(`
@@ -659,9 +641,7 @@ function openTeamProfile(teamId, focusSide) {
         return `<li class="${done ? (m.winner_id === t.id ? 'w' : 'l') : 'live'}"><span>vs ${esc(teamName(opp))}</span><b>${gw} : ${gl}</b><em>${done ? (m.winner_id === t.id ? '勝' : '敗') : '進行中'}</em></li>`;
       }).join('')}</ul>` : '<p class="note">還沒有比賽紀錄。</p>'}
     </div>`,
-  (modal, close) => {
-    modal.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => { close(); openPersonEdit(t, b.dataset.edit); }));
-  });
+  () => {});
 }
 
 function openScoreModal(match) {
@@ -873,7 +853,6 @@ const actions = {
     if (match && isOrganizer()) openScoreModal(match);
   },
   'team-profile': ({ id }) => openTeamProfile(id),
-  'edit-profile': ({ id }) => openTeamProfile(id),
   'person-profile': ({ id, side }) => openTeamProfile(id, side),
   'edit-team': ({ id }) => {
     const team = teamById(id);
