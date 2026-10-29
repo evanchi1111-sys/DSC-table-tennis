@@ -1,9 +1,9 @@
 import { ORGANIZER_EMAIL } from './config.js';
-import { createBackend, isConfigured } from './backend.js?v=20261029j';
+import { createBackend, isConfigured } from './backend.js?v=20261029n';
 import { generateRoundRobin } from './scheduler.js';
 import { computeRankings, gamesWon, gameWinner } from './ranking.js';
 import { exportExcel, printReport } from './export.js';
-import { avatar, titleChip, profileOf } from './people.js';
+import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog } from './people.js';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
 const FORMATS = {
@@ -30,6 +30,7 @@ const state = {
   teams: [],
   matches: [],
   people: {}, // 選手資料庫：{ 姓名: { unit, title, photo_url } }，三個系統共用
+  results: {}, // 選手歷年成績（冠、亞、季軍）：{ 姓名: [成績] }
   user: null,
   live: false,
   division: DIVISIONS[store.get('division')] ? store.get('division') : 'competitive',
@@ -230,6 +231,7 @@ function renderStatus() {
             ? `<details class="more">
                  <summary class="btn">更多管理</summary>
                  <div class="more-menu">
+                   ${!isSetup() ? `<button class="btn" data-action="save-results" ${busy}>🏅 存入選手成績（冠亞季軍）</button>` : ''}
                    ${!isSetup() ? `<button class="btn" data-action="reset" ${busy}>重設賽程（保留名單）</button>` : ''}
                    <button class="btn" data-action="change-password">變更密碼</button>
                    <button class="btn danger" data-action="wipe" ${busy}>清除全部資料</button>
@@ -428,32 +430,15 @@ function renderTeams() {
   const teams = state.teams.filter((t) => t.division === state.division);
   const editable = isOrganizer() && isSetup();
   const busy = state.busy ? 'disabled' : '';
-  const divisionOptions = Object.entries(DIVISIONS)
-    .map(([key, label]) => `<option value="${key}" ${key === state.division ? 'selected' : ''}>${label}</option>`)
-    .join('');
 
   return `
     ${
       editable
-        ? `<div class="forms">
-            <form class="card form" data-form="add-team">
-              <h3>新增一組</h3>
-              <div class="row">
-                <label>選手一<input name="a" required maxlength="40" autocomplete="off"></label>
-                <label>選手二<input name="b" required maxlength="40" autocomplete="off"></label>
-              </div>
-              <label>組別<select name="division">${divisionOptions}</select></label>
-              <button class="btn primary" ${busy}>新增</button>
-            </form>
-            <form class="card form" data-form="bulk-import">
-              <h3>批次匯入</h3>
-              <label>每行一組，兩位選手用空白、逗號或 / 分開；可在後面加「競賽」或「歡樂」指定組別
-                <textarea name="text" rows="5" placeholder="王小明 李大華&#10;陳志強/林建宏 競賽&#10;許文彬,楊佩珊,歡樂"></textarea>
-              </label>
-              <label>未指定時的組別<select name="division">${divisionOptions}</select></label>
-              <button class="btn primary" ${busy}>匯入</button>
-            </form>
-          </div>`
+        ? `<section class="card">
+            <h3>新增一組（${DIVISIONS[state.division]}）</h3>
+            <p class="note">選手資料請先在「選手資料庫」頁建立；這裡直接從資料庫挑 2 位選手組成一組，不需要輸入或匯入。</p>
+            <button class="btn primary" data-action="pick-team" ${busy}>👥 從選手資料庫挑選 2 位選手</button>
+          </section>`
         : isOrganizer()
           ? `<div class="banner info">比賽進行中，名單已鎖定。如需修改名單，請先在「更多管理」重設賽程。</div>`
           : ''
@@ -580,30 +565,71 @@ function openPasswordModal() {
   );
 }
 
-function openTeamModal(team) {
-  const divisionOptions = Object.entries(DIVISIONS)
-    .map(([key, label]) => `<option value="${key}" ${key === team.division ? 'selected' : ''}>${label}</option>`)
-    .join('');
-  openModal(
-    `<h2>修改隊伍</h2>
-     <form data-modal-form>
-       <label>選手一<input name="a" required maxlength="40" value="${esc(team.player_a)}"></label>
-       <label>選手二<input name="b" required maxlength="40" value="${esc(team.player_b)}"></label>
-       <label>組別<select name="division">${divisionOptions}</select></label>
-       <div class="modal-actions"><button type="button" class="btn" data-close>取消</button><button class="btn primary">儲存</button></div>
-     </form>`,
-    (modal, close) => {
-      const form = modal.querySelector('form');
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const patch = { player_a: form.a.value.trim(), player_b: form.b.value.trim(), division: form.division.value };
-        if (!patch.player_a || !patch.player_b) return;
-        close();
-        await run(() => backend.updateTeam(team.id, patch), '隊伍已更新');
-        await reload();
-      });
-    }
-  );
+// 把各組別的冠、亞、季軍存入選手資料庫的「歷年成績」：兩位選手各記一筆（同一年度重存會取代舊的）
+function saveResults() {
+  const ready = [];
+  const notReady = [];
+  for (const [division, label] of Object.entries(DIVISIONS)) {
+    const matches = divisionMatches(division);
+    if (!matches.length) continue;
+    if (matches.some((m) => m.status !== 'completed')) { notReady.push(`${label}還有比賽沒打完`); continue; }
+    const ranks = computeRankings(state.teams, state.matches, division);
+    const top = ranks.filter((s) => s.rank <= 3);
+    if (top.some((s) => s.drawTied && s.team.draw_rank == null)) { notReady.push(`${label}有戰績相同的隊伍，請先抽籤`); continue; }
+    ready.push({ division, label, top });
+  }
+  if (!ready.length) return toast(notReady.length ? notReady.join('；') : '還沒有完成的比賽', 'error');
+  const list = ready.map((r) => `雙打賽 ${r.label}\n${r.top.map((s) => `　${PLACE_LABEL[s.rank]}：${s.team.player_a} & ${s.team.player_b}`).join('\n')}`).join('\n');
+  openSaveResultsDialog({
+    openModal,
+    summary: `${list}${notReady.length ? `\n\n（略過：${notReady.join('；')}）` : ''}`,
+    onConfirm: async ({ year, event }) => {
+      const ok = await run(async () => {
+        for (const r of ready) {
+          const rows = r.top.flatMap((s) => [
+            { name: s.team.player_a, place: s.rank, detail: `與 ${s.team.player_b} 搭檔` },
+            { name: s.team.player_b, place: s.rank, detail: `與 ${s.team.player_a} 搭檔` },
+          ]);
+          await backend.saveResults('doubles', r.division, year, event, rows);
+        }
+      }, `已存入「${event}」冠亞季軍`);
+      if (ok) await reload();
+      return ok;
+    },
+  });
+}
+
+// 從選手資料庫挑 2 位選手組成一組雙打；傳入 team 就是修改這一組的選手
+function pickTeam(team) {
+  const division = team ? team.division : state.division;
+  const taken = {};
+  for (const t of state.teams) {
+    if (t.division !== division || (team && t.id === team.id)) continue;
+    taken[t.player_a] = '已在其他組';
+    taken[t.player_b] = '已在其他組';
+  }
+  const current = team ? [team.player_a, team.player_b] : [];
+  openPeoplePicker({
+    openModal,
+    people: state.people,
+    extra: current,
+    selected: current,
+    disabled: taken,
+    title: team ? '修改這一組的選手' : `新增一組（${DIVISIONS[division]}）`,
+    hint: '請選 2 位選手組成一組雙打；同一組別裡已經有隊伍的選手不能重複選。',
+    min: 2,
+    max: 2,
+    confirmLabel: team ? '儲存' : '新增這一組',
+    onConfirm: async (picked) => {
+      const [a, b] = picked;
+      if (a.length > 40 || b.length > 40) { toast('姓名超過 40 字', 'error'); return false; }
+      const ok = team
+        ? await run(() => backend.updateTeam(team.id, { player_a: a, player_b: b }), '隊伍已更新')
+        : await run(() => backend.addTeams([{ player_a: a, player_b: b, division }]), `已新增 ${a} & ${b}`);
+      if (ok) await reload();
+      return ok;
+    },
+  });
 }
 
 // 隊伍檔案：兩位選手的資料加上這一組的戰績
@@ -631,6 +657,7 @@ function openTeamProfile(teamId, focusSide) {
         <div><b>${s && s.played ? `${s.pointsWon - s.pointsLost > 0 ? '+' : ''}${s.pointsWon - s.pointsLost}` : 0}</b><span>得失分</span></div>
       </div>
       ${s && s.played ? `<p class="note profile-rank">目前排名第 ${s.rank} 名</p>` : ''}
+      ${['a', 'b'].map((side) => resultsHtml(state.results[t['player_' + side]], { title: `${t['player_' + side]} 的歷年成績` })).join('')}
       <h3 class="profile-h">本賽事戰績</h3>
       ${played.length ? `<ul class="profile-matches">${played.map((m) => {
         const mine = m.team1_id === t.id ? 1 : 2;
@@ -763,26 +790,6 @@ function openScoreModal(match) {
 
 // ---------------------------------------------------------------- 操作
 
-function parseBulk(text, fallbackDivision) {
-  const rows = [];
-  const skipped = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const parts = line.split(/[\s,，、\/／&＆+]+/).filter(Boolean);
-    let division = fallbackDivision;
-    const last = parts[parts.length - 1] || '';
-    if (parts.length >= 3 && /競賽|competitive/i.test(last)) { division = 'competitive'; parts.pop(); }
-    else if (parts.length >= 3 && /歡樂|成長|fun/i.test(last)) { division = 'fun'; parts.pop(); }
-    if (parts.length !== 2 || parts.some((p) => p.length > 40)) {
-      skipped.push(line);
-      continue;
-    }
-    rows.push({ player_a: parts[0], player_b: parts[1], division });
-  }
-  return { rows, skipped };
-}
-
 function buildReport() {
   return {
     title: '桌球雙打賽成績',
@@ -854,9 +861,11 @@ const actions = {
   },
   'team-profile': ({ id }) => openTeamProfile(id),
   'person-profile': ({ id, side }) => openTeamProfile(id, side),
+  'pick-team': () => pickTeam(),
+  'save-results': saveResults,
   'edit-team': ({ id }) => {
     const team = teamById(id);
-    if (team) openTeamModal(team);
+    if (team) pickTeam(team);
   },
   'delete-team': ({ id }) => {
     if (!confirm(`確定刪除「${teamName(id)}」？`)) return;
@@ -894,25 +903,6 @@ app.addEventListener('submit', async (e) => {
   const form = e.target.closest('[data-form]');
   if (!form) return;
   e.preventDefault();
-  if (form.dataset.form === 'add-team') {
-    const row = { player_a: form.a.value.trim(), player_b: form.b.value.trim(), division: form.division.value };
-    if (!row.player_a || !row.player_b) return;
-    if (await run(() => backend.addTeams([row]), `已新增 ${row.player_a} & ${row.player_b}`)) {
-      form.reset();
-      await reload();
-    }
-  } else if (form.dataset.form === 'bulk-import') {
-    const { rows, skipped } = parseBulk(form.text.value, form.division.value);
-    if (!rows.length) {
-      toast(skipped.length ? `看不懂這些行：${skipped.slice(0, 3).join('｜')}` : '請先貼上名單', 'error');
-      return;
-    }
-    if (await run(() => backend.addTeams(rows))) {
-      toast(`已匯入 ${rows.length} 組${skipped.length ? `，略過 ${skipped.length} 行：${skipped.slice(0, 3).join('｜')}` : ''}`, skipped.length ? 'info' : 'ok');
-      form.reset();
-      await reload();
-    }
-  }
 });
 
 // ---------------------------------------------------------------- 啟動

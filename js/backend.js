@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ORGANIZER_EMAIL } from './config.js';
-import { peopleApi, demoPeopleApi } from './people.js';
+import { peopleApi, demoPeopleApi, resultsApi, demoResultsApi } from './people.js';
 
 const DEFAULT_SETTINGS = { id: 1, status: 'setup', match_format: 'best_of_3' };
 
@@ -41,21 +41,24 @@ async function createSupabaseBackend() {
     return rows;
   };
   const people = peopleApi(sb);
+  const results = resultsApi(sb);
   const updateSettings = async (patch) =>
     mustAffect(await sb.from('settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1).select());
 
   return {
     async load() {
-      const [settings, teams, matches, peopleMap] = await Promise.all([
+      const [settings, teams, matches, peopleMap, resultsMap] = await Promise.all([
         sb.from('settings').select('*').eq('id', 1).maybeSingle(),
         sb.from('teams').select('*').order('created_at').order('id'),
         sb.from('matches').select('*').order('round').order('seq'),
         people.load(),
+        results.load(),
       ]);
       return {
         settings: check(settings) || { ...DEFAULT_SETTINGS },
         teams: check(teams),
         people: peopleMap,
+        results: resultsMap,
         matches: check(matches),
       };
     },
@@ -98,6 +101,8 @@ async function createSupabaseBackend() {
     async updateTeam(id, patch) {
       mustAffect(await sb.from('teams').update(patch).eq('id', id).select());
     },
+    // 把冠、亞、季軍存入選手歷年成績（同一比賽、組別、年度會整批取代）
+    async saveResults(system, division, year, event, rows) { await results.replace(system, division, year, event, rows); },
     async deleteTeam(id) {
       mustAffect(await sb.from('teams').delete().eq('id', id).select());
     },
@@ -140,7 +145,15 @@ function createDemoBackend() {
   const DEMO_PEOPLE = Object.fromEntries(
     sample.flatMap(([a, b], i) => [[a, '台北市桌球協會', '隊長'], [b, '新北市桌球隊', '選手']].map(([name, unit, title]) => [name, { name, unit: `${unit}`, title, photo_url: null }]))
   );
+  // 選手資料庫裡還沒有組隊的選手（示範：可以挑來組新的一組）
+  ['陳志明', '林建宏', '黃俊傑', '張家豪', '李承翰', '王冠宇'].forEach((name, i) => {
+    DEMO_PEOPLE[name] = { name, unit: ['台中市體育會', '高雄市桌球隊', '桃園市桌球隊'][i % 3], title: '選手', photo_url: null };
+  });
   const peopleDemo = demoPeopleApi(DEMO_PEOPLE);
+  const resultsDemo = demoResultsApi([
+    { name: '王小明', year: 2025, system: 'doubles', division: 'competitive', place: 1, detail: '與 李大華 搭檔' },
+    { name: '李大華', year: 2025, system: 'doubles', division: 'competitive', place: 1, detail: '與 王小明 搭檔' },
+  ]);
   const db = {
     settings: { ...DEFAULT_SETTINGS },
     teams: sample.map(([a, b, division], i) => ({
@@ -161,7 +174,7 @@ function createDemoBackend() {
     isDemo: true,
     demoPassword: DEMO_PASSWORD,
     async load() {
-      return { ...clone(db), people: await peopleDemo.load() };
+      return { ...clone(db), people: await peopleDemo.load(), results: await resultsDemo.load() };
     },
     subscribe(onChange, onStatus = () => {}) {
       dataListeners.add(onChange);
@@ -198,6 +211,8 @@ function createDemoBackend() {
       Object.assign(db.teams.find((t) => t.id === id), patch);
       emit();
     },
+    // 把冠、亞、季軍存入選手歷年成績（同一比賽、組別、年度會整批取代）
+    async saveResults(system, division, year, event, rows) { requireOrganizer(); await resultsDemo.replace(system, division, year, event, rows); emit(); },
     async deleteTeam(id) {
       requireOrganizer();
       db.teams = db.teams.filter((t) => t.id !== id);
