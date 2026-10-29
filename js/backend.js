@@ -1,4 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ORGANIZER_EMAIL } from './config.js';
+import { peopleApi, demoPeopleApi } from './people.js';
 
 const DEFAULT_SETTINGS = { id: 1, status: 'setup', match_format: 'best_of_3' };
 
@@ -39,19 +40,22 @@ async function createSupabaseBackend() {
     if (!rows || rows.length === 0) throw new Error('沒有寫入權限，請重新登入主辦帳號');
     return rows;
   };
+  const people = peopleApi(sb);
   const updateSettings = async (patch) =>
     mustAffect(await sb.from('settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1).select());
 
   return {
     async load() {
-      const [settings, teams, matches] = await Promise.all([
+      const [settings, teams, matches, peopleMap] = await Promise.all([
         sb.from('settings').select('*').eq('id', 1).maybeSingle(),
         sb.from('teams').select('*').order('created_at').order('id'),
         sb.from('matches').select('*').order('round').order('seq'),
+        people.load(),
       ]);
       return {
         settings: check(settings) || { ...DEFAULT_SETTINGS },
         teams: check(teams),
+        people: peopleMap,
         matches: check(matches),
       };
     },
@@ -59,7 +63,7 @@ async function createSupabaseBackend() {
     // 斷線時收到 'CHANNEL_ERROR' / 'TIMED_OUT' / 'CLOSED'
     subscribe(onChange, onStatus = () => {}) {
       const channel = sb.channel('tournament');
-      for (const table of ['settings', 'teams', 'matches']) {
+      for (const table of ['settings', 'teams', 'matches', 'people']) {
         channel.on('postgres_changes', { event: '*', schema: 'public', table }, onChange);
       }
       channel.subscribe((status) => onStatus(status));
@@ -88,6 +92,9 @@ async function createSupabaseBackend() {
       if (error) throw friendlyError(error);
     },
 
+    // 選手資料庫（單位、頭銜、照片），三個系統共用
+    async savePerson(name, patch) { await people.save(name, patch); },
+    uploadPhoto(blob) { return people.upload(blob); },
     async addTeams(rows) {
       check(await sb.from('teams').insert(rows));
     },
@@ -132,6 +139,11 @@ function createDemoBackend() {
     ['劉家豪', '吳俊傑', 'competitive'], ['蔡宜君', '鄭雅婷', 'competitive'],
     ['許文彬', '楊佩珊', 'fun'], ['郭子軒', '謝欣妤', 'fun'], ['洪偉倫', '邱詩涵', 'fun'], ['周品妍', '曾冠宇', 'fun'],
   ];
+  // 示範用的單位與頭銜（虛構，僅供預覽畫面）
+  const DEMO_PEOPLE = Object.fromEntries(
+    sample.flatMap(([a, b], i) => [[a, '台北市桌球協會', '隊長'], [b, '新北市桌球隊', '選手']].map(([name, unit, title]) => [name, { name, unit: `${unit}`, title, photo_url: null }]))
+  );
+  const peopleDemo = demoPeopleApi(DEMO_PEOPLE);
   const db = {
     settings: { ...DEFAULT_SETTINGS },
     teams: sample.map(([a, b, division], i) => ({
@@ -152,7 +164,7 @@ function createDemoBackend() {
     isDemo: true,
     demoPassword: DEMO_PASSWORD,
     async load() {
-      return clone(db);
+      return { ...clone(db), people: await peopleDemo.load() };
     },
     subscribe(onChange, onStatus = () => {}) {
       dataListeners.add(onChange);
@@ -178,6 +190,9 @@ function createDemoBackend() {
     async changePassword() {
       throw new Error('示範模式無法變更密碼');
     },
+    // 選手資料庫（示範模式：只存在記憶體）
+    async savePerson(name, patch) { requireOrganizer(); await peopleDemo.save(name, patch); emit(); },
+    uploadPhoto(blob) { return peopleDemo.upload(blob); },
     async addTeams(rows) {
       requireOrganizer();
       rows.forEach((r, i) => db.teams.push({ id: uid(), draw_rank: null, created_at: new Date(Date.now() + i).toISOString(), ...r }));

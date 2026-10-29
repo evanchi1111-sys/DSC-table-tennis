@@ -1,8 +1,9 @@
 import { ORGANIZER_EMAIL } from './config.js';
-import { createBackend, isConfigured } from './backend.js';
+import { createBackend, isConfigured } from './backend.js?v=20261029h';
 import { generateRoundRobin } from './scheduler.js';
 import { computeRankings, gamesWon, gameWinner } from './ranking.js';
 import { exportExcel, printReport } from './export.js';
+import { avatar, titleChip, openPersonEditor, profileOf } from './people.js';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
 const FORMATS = {
@@ -28,6 +29,7 @@ const state = {
   settings: { status: 'setup', match_format: 'best_of_3' },
   teams: [],
   matches: [],
+  people: {}, // 選手資料庫：{ 姓名: { unit, title, photo_url } }，三個系統共用
   user: null,
   live: false,
   division: DIVISIONS[store.get('division')] ? store.get('division') : 'competitive',
@@ -49,6 +51,10 @@ const teamName = (id) => {
   const t = teamById(id);
   return t ? `${t.player_a} & ${t.player_b}` : '（已刪除）';
 };
+// 一組雙打有兩位選手；side 為 'a' 或 'b'。單位、頭銜、照片來自選手資料庫（以姓名對應）
+const personOf = (t, side) => profileOf(state.people, t[`player_${side}`]);
+const pairAvatars = (t, size = 'sm') => (t ? `<span class="pair">${avatar(personOf(t, 'a'), size)}${avatar(personOf(t, 'b'), size)}</span>` : '');
+const unitsOf = (t) => [...new Set(['a', 'b'].map((s) => personOf(t, s).unit).filter(Boolean))].map(esc).join('、');
 const isOrganizer = () => !!state.user && (state.user.email || '').toLowerCase() === ORGANIZER_EMAIL.toLowerCase();
 const isSetup = () => state.settings.status !== 'active';
 const formatOf = (m) => FORMATS[m?.match_format] || FORMATS[state.settings.match_format] || FORMATS.best_of_3;
@@ -128,6 +134,7 @@ app.addEventListener('focusout', () => {
 // ---------------------------------------------------------------- 畫面
 
 function render() {
+  document.dispatchEvent(new CustomEvent('site-organizer', { detail: isOrganizer() })); // 只有主辦看得到共用導覽列
   if (!state.loaded) {
     app.innerHTML = state.error
       ? `<div class="center-card"><h2>無法讀取賽事資料</h2><p>${esc(state.error)}</p><button class="btn primary" data-action="retry">重新載入</button></div>`
@@ -292,7 +299,7 @@ function renderRankings(rankings) {
               return `
                 <tr class="${s.team.id === state.myTeam ? 'mine' : ''}">
                   <td class="rank">${medal || s.rank}</td>
-                  <td class="left"><div class="team">${esc(s.team.player_a)} & ${esc(s.team.player_b)}</div><div class="basis show-sm">${esc(basis)}</div>${drawCell}</td>
+                  <td class="left"><button type="button" class="who-btn" data-action="team-profile" data-id="${s.team.id}">${pairAvatars(s.team)}<span class="who-tx"><span class="team">${esc(s.team.player_a)} & ${esc(s.team.player_b)}</span>${unitsOf(s.team) ? `<small class="who-sub">${unitsOf(s.team)}</small>` : ''}</span></button><div class="basis show-sm">${esc(basis)}</div>${drawCell}</td>
                   <td>${s.wins}</td>
                   <td>${s.losses}</td>
                   <td class="nowrap">${s.gamesWon}:${s.gamesLost}</td>
@@ -371,7 +378,7 @@ function matchCard(m, mine, org) {
   // 每隊一列：隊名、各局得分（贏的局加粗）、總局數
   const side = (id, wins, idx) => `
     <span class="side ${m.winner_id === id ? 'won' : ''} ${id === mine ? 'me' : ''}">
-      <span class="name">${esc(teamName(id))}</span>
+      <span class="name">${pairAvatars(teamById(id), 'xs')}<span>${esc(teamName(id))}</span></span>
       <span class="pts">${games.map((g) => `<span class="pt ${gameWinner(g) === idx + 1 ? 'w' : ''}">${Number(g[idx])}</span>`).join('')}</span>
       <span class="score">${m.status === 'not_started' ? '' : wins}</span>
     </span>`;
@@ -453,25 +460,34 @@ function renderTeams() {
     }
     ${
       teams.length
-        ? `<ul class="team-list">
+        ? `<div class="team-cards">
             ${teams
               .map(
                 (t, i) => `
-              <li class="${t.id === state.myTeam ? 'mine' : ''}">
-                <span class="idx">${i + 1}</span>
-                <span class="team">${esc(t.player_a)} & ${esc(t.player_b)}</span>
-                ${
-                  editable
-                    ? `<span class="row-actions">
-                         <button class="btn small" data-action="edit-team" data-id="${t.id}">修改</button>
-                         <button class="btn small danger" data-action="delete-team" data-id="${t.id}" ${busy}>刪除</button>
-                       </span>`
-                    : ''
-                }
-              </li>`
+              <article class="tcard ${t.id === state.myTeam ? 'mine' : ''}">
+                <div class="tcard-top">
+                  <span class="idx">${i + 1}</span>
+                  <span class="row-actions" style="margin-left:auto">
+                    ${isOrganizer() ? `<button class="btn small" data-action="edit-profile" data-id="${t.id}">編輯資料</button>` : ''}
+                    ${editable ? `<button class="btn small" data-action="edit-team" data-id="${t.id}">修改</button>
+                         <button class="btn small danger" data-action="delete-team" data-id="${t.id}" ${busy}>刪除</button>` : ''}
+                  </span>
+                </div>
+                <div class="tcard-people">
+                  ${['a', 'b']
+                    .map((s) => {
+                      const p = personOf(t, s);
+                      return `<button type="button" class="person" data-action="person-profile" data-id="${t.id}" data-side="${s}">
+                        <span class="person-photo">${avatar(p, 'cover')}</span>
+                        <b>${esc(p.name)}</b><small>${esc(p.unit || '（未填單位）')}</small>${titleChip(p.title)}
+                      </button>`;
+                    })
+                    .join('')}
+                </div>
+              </article>`
               )
               .join('')}
-          </ul>`
+          </div>`
         : emptyState('這個組別還沒有隊伍。')
     }`;
 }
@@ -589,6 +605,63 @@ function openTeamModal(team) {
       });
     }
   );
+}
+
+// 編輯一位選手的單位、頭銜、照片（存到共用的選手資料庫）
+function openPersonEdit(team, side) {
+  const p = personOf(team, side);
+  openPersonEditor({
+    openModal,
+    person: p,
+    onSave: ({ unit, title, blob, removed }) => run(async () => {
+      let photo_url = p.photo_url || null;
+      if (blob) photo_url = await backend.uploadPhoto(blob);
+      else if (removed) photo_url = null;
+      await backend.savePerson(p.name, { unit, title, photo_url });
+    }, '選手資料已儲存'),
+  });
+}
+
+// 隊伍檔案：兩位選手的資料加上這一組的戰績
+function openTeamProfile(teamId, focusSide) {
+  const t = teamById(teamId);
+  if (!t) return;
+  const s = computeRankings(state.teams, state.matches, t.division).find((x) => x.team.id === t.id);
+  const played = state.matches.filter((m) => (m.team1_id === t.id || m.team2_id === t.id) && m.status !== 'not_started');
+  const org = isOrganizer();
+  const tile = (side) => {
+    const p = personOf(t, side);
+    return `<div class="person static ${focusSide === side ? 'focus' : ''}">
+      <span class="person-photo">${avatar(p, 'cover')}</span>
+      <b>${esc(p.name)}</b><small>${esc(p.unit || '（未填單位）')}</small>${titleChip(p.title)}
+      ${org ? `<button type="button" class="btn small" data-edit="${side}">✎ 編輯</button>` : ''}
+    </div>`;
+  };
+  openModal(`
+    <div class="profile">
+      <button type="button" class="profile-x" data-close aria-label="關閉">✕</button>
+      <h2>${esc(t.player_a)} & ${esc(t.player_b)}</h2>
+      <p class="profile-unit">${DIVISIONS[t.division]}${unitsOf(t) ? `・${unitsOf(t)}` : ''}</p>
+      <div class="profile-people">${tile('a')}${tile('b')}</div>
+      <div class="stats">
+        <div><b>${s ? s.wins : 0}</b><span>勝</span></div>
+        <div><b>${s ? s.losses : 0}</b><span>敗</span></div>
+        <div><b>${s && s.played ? `${s.pointsWon - s.pointsLost > 0 ? '+' : ''}${s.pointsWon - s.pointsLost}` : 0}</b><span>得失分</span></div>
+      </div>
+      ${s && s.played ? `<p class="note profile-rank">目前排名第 ${s.rank} 名</p>` : ''}
+      <h3 class="profile-h">本賽事戰績</h3>
+      ${played.length ? `<ul class="profile-matches">${played.map((m) => {
+        const mine = m.team1_id === t.id ? 1 : 2;
+        const opp = m.team1_id === t.id ? m.team2_id : m.team1_id;
+        const gw = gamesWon(m.games, mine);
+        const gl = gamesWon(m.games, mine === 1 ? 2 : 1);
+        const done = m.status === 'completed';
+        return `<li class="${done ? (m.winner_id === t.id ? 'w' : 'l') : 'live'}"><span>vs ${esc(teamName(opp))}</span><b>${gw} : ${gl}</b><em>${done ? (m.winner_id === t.id ? '勝' : '敗') : '進行中'}</em></li>`;
+      }).join('')}</ul>` : '<p class="note">還沒有比賽紀錄。</p>'}
+    </div>`,
+  (modal, close) => {
+    modal.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => { close(); openPersonEdit(t, b.dataset.edit); }));
+  });
 }
 
 function openScoreModal(match) {
@@ -799,6 +872,9 @@ const actions = {
     const match = state.matches.find((m) => m.id === id);
     if (match && isOrganizer()) openScoreModal(match);
   },
+  'team-profile': ({ id }) => openTeamProfile(id),
+  'edit-profile': ({ id }) => openTeamProfile(id),
+  'person-profile': ({ id, side }) => openTeamProfile(id, side),
   'edit-team': ({ id }) => {
     const team = teamById(id);
     if (team) openTeamModal(team);

@@ -150,3 +150,20 @@ input, select, textarea { border: 1.5px solid #c5d5e6; border-radius: 14px; back
 .who { flex: none; }
 .who .chip { white-space: nowrap; font-size: 12px; padding: 2px 8px; background: #fff; color: var(--green-d); }
 @media (max-width: 480px) { .brand h1 { font-size: 16px; line-height: 1.25; } .brand-logo { width: 40px; height: 40px; } }
+
+/* ================= 電腦版版面（螢幕寬度 ≥ 960px）：左欄固定賽事狀態，右欄放組別、分頁與內容 ================= */
+@media (min-width: 960px) {
+  .container { width: min(1180px, 100% - 64px); }
+  main.container { display: grid; grid-template-columns: minmax(300px, 340px) minmax(0, 1fr); gap: 18px 28px; align-items: start; }
+  main.container > * { grid-column: 1 / -1; }
+  main.container > .status { grid-column: 1; grid-row: span 4; position: sticky; top: 16px; margin-bottom: 0; }
+  main.container > .tabs, main.container > .subtabs, main.container > .panel { grid-column: 2; }
+  .tabs { max-width: none; margin-bottom: 0; }
+  .subtabs { margin-bottom: 0; }
+  .match-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+  .team-cards { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  th, td { padding: 14px 12px; }
+  .who-btn:hover .team { color: var(--green); text-decoration: underline; }
+  .match, .person-photo { transition: transform .12s, box-shadow .12s; }
+  button.match:hover { transform: translateY(-1px); }
+}
