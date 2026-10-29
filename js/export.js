@@ -16,7 +16,7 @@ function rankingRows(division) {
     敗: s.losses,
     局數: `${s.gamesWon} : ${s.gamesLost}`,
     得失分: `${s.pointsWon} : ${s.pointsLost}`,
-    判定依據: s.drawTied && s.team.draw_rank == null ? `${s.basis}（未抽籤）` : s.basis,
+    判定依據: s.drawTied && s.drawBad ? `${s.basis}（未抽籤）` : s.basis,
   }));
 }
 

@@ -1,7 +1,7 @@
 import { ORGANIZER_EMAIL } from './config.js';
 import { createBackend, isConfigured } from './backend.js?v=20261029o';
 import { generateRoundRobin } from './scheduler.js';
-import { computeRankings, gamesWon, gameWinner } from './ranking.js';
+import { computeRankings, gamesWon, gameWinner } from './ranking.js?v=20261029p';
 import { exportExcel, printReport } from './export.js';
 import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog } from './people.js';
 
@@ -277,10 +277,10 @@ function myTeamPicker() {
 function renderRankings(rankings) {
   if (!rankings.length) return emptyState('這個組別還沒有隊伍。');
   const org = isOrganizer();
-  const needDraw = rankings.some((s) => s.drawTied && s.team.draw_rank == null);
+  const needDraw = rankings.some((s) => s.drawTied && s.drawBad);
   return `
     ${myTeamPicker()}
-    ${needDraw && org ? `<div class="banner warn">有隊伍戰績完全相同，請抽籤後在「抽籤」欄填入順位。</div>` : ''}
+    ${needDraw && org ? `<div class="banner warn">有隊伍戰績完全相同，請由主辦單位現場抽籤，再在「抽籤」欄填入順位（1～同分隊數，不可重複）。</div>` : ''}
     <div class="table-wrap">
       <table class="rank-table">
         <thead><tr><th>名次</th><th class="left">隊伍</th><th>勝</th><th>敗</th><th>局數</th><th class="hide-sm">得失分</th><th class="left hide-sm">判定依據</th></tr></thead>
@@ -292,12 +292,12 @@ function renderRankings(rankings) {
                 s.drawTied && org
                   ? `<label class="draw">抽籤 <select data-change="draw-rank" data-id="${s.team.id}" aria-label="抽籤順位">
                        <option value="">—</option>
-                       ${Array.from({ length: rankings.length }, (_, i) => i + 1)
+                       ${Array.from({ length: s.tieSize }, (_, i) => i + 1)
                          .map((n) => `<option value="${n}" ${s.team.draw_rank === n ? 'selected' : ''}>${n}</option>`)
                          .join('')}
                      </select></label>`
                   : '';
-              const basis = s.drawTied && s.team.draw_rank == null ? `${s.basis}（未抽籤）` : s.basis;
+              const basis = s.drawTied && s.drawBad ? `${s.basis}（${s.drawDup ? '順位重複' : '未抽籤'}）` : s.basis;
               return `
                 <tr class="${s.team.id === state.myTeam ? 'mine' : ''}">
                   <td class="rank">${medal || s.rank}</td>
@@ -575,7 +575,7 @@ function saveResults() {
     if (matches.some((m) => m.status !== 'completed')) { notReady.push(`${label}還有比賽沒打完`); continue; }
     const ranks = computeRankings(state.teams, state.matches, division);
     const top = ranks.filter((s) => s.rank <= 3);
-    if (top.some((s) => s.drawTied && s.team.draw_rank == null)) { notReady.push(`${label}有戰績相同的隊伍，請先抽籤`); continue; }
+    if (top.some((s) => s.drawTied && s.drawBad)) { notReady.push(`${label}有戰績相同的隊伍，請先抽籤`); continue; }
     ready.push({ division, label, top });
   }
   if (!ready.length) return toast(notReady.length ? notReady.join('；') : '還沒有完成的比賽', 'error');

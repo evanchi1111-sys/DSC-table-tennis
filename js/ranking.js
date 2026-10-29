@@ -10,6 +10,22 @@
 const ratio = (won, lost) => (lost === 0 ? (won > 0 ? Infinity : 1) : won / lost);
 const drawRank = (stat) => stat.team.draw_rank ?? 999;
 
+// 抽籤由主辦單位在現場進行、人工填入順位；系統只負責提示。
+// 同一組要抽籤的隊伍有相同的 tieGroup；順位要是 1～該組人數且不重複，否則視為「還沒抽完」（drawBad）
+let tieSeq = 0;
+function markDraws(ordered) {
+  const groups = new Map();
+  for (const s of ordered) if (s.drawTied) groups.set(s.tieGroup, [...(groups.get(s.tieGroup) || []), s]);
+  for (const list of groups.values()) {
+    for (const s of list) {
+      const d = s.team.draw_rank;
+      s.tieSize = list.length;
+      s.drawDup = d != null && list.filter((x) => x.team.draw_rank === d).length > 1;
+      s.drawBad = d == null || d < 1 || d > list.length || s.drawDup;
+    }
+  }
+}
+
 export const gameWinner = (g) => (Array.isArray(g) && g[0] !== g[1] ? (g[0] > g[1] ? 1 : 2) : 0);
 export const gamesWon = (games, side) => (games || []).filter((g) => gameWinner(g) === side).length;
 
@@ -81,6 +97,7 @@ export function computeRankings(teams, matches, division) {
     }
   }
   ordered.forEach((s, i) => { s.rank = i + 1; });
+  markDraws(ordered);
   return ordered;
 }
 
@@ -102,6 +119,7 @@ function resolvePair([a, b], completed) {
     return a.pointsRatio > b.pointsRatio ? [a, b] : [b, a];
   }
   a.drawTied = b.drawTied = true;
+  a.tieGroup = b.tieGroup = ++tieSeq;
   a.basis = b.basis = '戰績相同・抽籤';
   return drawRank(a) <= drawRank(b) ? [a, b] : [b, a];
 }
@@ -146,7 +164,8 @@ function splitByStep(members, step, completed) {
     }
   }
   if (step >= STEPS.length) {
-    members.forEach((s) => { s.drawTied = true; s.basis = '戰績相同・抽籤'; });
+    const tg = ++tieSeq;
+    members.forEach((s) => { s.drawTied = true; s.tieGroup = tg; s.basis = '戰績相同・抽籤'; });
     return [...members].sort((a, b) => drawRank(a) - drawRank(b));
   }
   const { key, label } = STEPS[step];
