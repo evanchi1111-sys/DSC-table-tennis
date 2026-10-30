@@ -159,6 +159,9 @@ function render() {
     </main>`;
 }
 
+// 英雄榜（公開頁面，所有人都能看）：正式環境在選手資料庫網站底下；本機測試連到 8769 埠
+const hallHref = () => (['localhost', '127.0.0.1'].includes(location.hostname) ? 'http://localhost:8769/hall.html' : '/players/hall.html') + (demo ? '?demo' : '');
+
 function renderHeader() {
   return `
     <header class="topbar">
@@ -176,8 +179,8 @@ function renderHeader() {
         </div>
         ${
           isOrganizer()
-            ? `<div class="who"><span class="chip ok">主辦模式</span><button class="btn small" data-action="logout">登出</button></div>`
-            : `<button class="btn small" data-action="login">主辦登入</button>`
+            ? `<div class="who"><a class="hall-chip" href="${hallHref()}">🏆 英雄榜</a><span class="chip ok">主辦模式</span><button class="btn small" data-action="logout">登出</button></div>`
+            : `<div class="who"><a class="hall-chip" href="${hallHref()}">🏆 英雄榜</a><button class="btn small" data-action="login">主辦登入</button></div>`
         }
       </div>
     </header>`;
