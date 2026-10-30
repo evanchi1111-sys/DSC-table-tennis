@@ -27,7 +27,11 @@ function markDraws(ordered) {
 }
 
 export const gameWinner = (g) => (Array.isArray(g) && g[0] !== g[1] ? (g[0] > g[1] ? 1 : 2) : 0);
-export const gamesWon = (games, side) => (games || []).filter((g) => gameWinner(g) === side).length;
+// 棄權：用一個特殊的「局」記錄，棄權方的分數為 -1，例如 [-1, 0] ＝ 隊伍一棄權、隊伍二直接獲勝；棄權只算勝負，不計局數與得失分
+export const WALKOVER = { 1: [-1, 0], 2: [0, -1] };
+export const isWalkover = (g) => Array.isArray(g) && (g[0] < 0 || g[1] < 0);
+export const walkoverSide = (games) => { const g = (games || []).find(isWalkover); return g ? (g[0] < 0 ? 1 : 2) : 0; };
+export const gamesWon = (games, side) => (games || []).filter((g) => !isWalkover(g) && gameWinner(g) === side).length;
 
 // 從某一隊的角度累計一場比賽的場、局、分
 function tally(totals, match, side) {
@@ -35,7 +39,7 @@ function tally(totals, match, side) {
   const myTeam = side === 1 ? match.team1_id : match.team2_id;
   if (match.winner_id === myTeam) totals.matchesWon++;
   else if (match.winner_id) totals.matchesLost++;
-  for (const g of match.games || []) {
+  for (const g of (match.games || []).filter((x) => !isWalkover(x))) {
     const w = gameWinner(g);
     if (w === side) totals.gamesWon++;
     else if (w === other) totals.gamesLost++;

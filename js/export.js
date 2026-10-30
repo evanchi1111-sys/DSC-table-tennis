@@ -1,10 +1,10 @@
 // 匯出 Excel 與列印成績。report 由 app.js 組好：
 // { title, formatLabel, generatedAt, divisions: [{ label, rankings, matches }], teamName(id), statusLabel(match) }
 
-import { gamesWon } from './ranking.js';
+import { gamesWon, walkoverSide } from './ranking.js?v=20261030i';
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const gameDetail = (m) => (m.games || []).map((g) => `${g[0]}:${g[1]}`).join('、');
+const gameDetail = (m) => (walkoverSide(m.games) ? '棄權' : (m.games || []).map((g) => `${g[0]}:${g[1]}`).join('、'));
 const fileStamp = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 
 function rankingRows(division) {
@@ -25,7 +25,7 @@ function matchRows(division, report) {
     輪次: `第 ${m.round} 輪`,
     隊伍一: report.teamName(m.team1_id),
     隊伍二: report.teamName(m.team2_id),
-    局數比分: m.status === 'not_started' ? '' : `${gamesWon(m.games, 1)} : ${gamesWon(m.games, 2)}`,
+    局數比分: m.status === 'not_started' ? '' : walkoverSide(m.games) ? '棄權勝' : `${gamesWon(m.games, 1)} : ${gamesWon(m.games, 2)}`,
     各局比分: gameDetail(m),
     勝方: m.winner_id ? report.teamName(m.winner_id) : '',
     狀態: report.statusLabel(m),

@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ORGANIZER_EMAIL } from './config.js';
-import { peopleApi, demoPeopleApi, resultsApi, demoResultsApi, archiveApi, demoArchiveApi } from './people.js?v=20261030h';
+import { peopleApi, demoPeopleApi, resultsApi, demoResultsApi, archiveApi, demoArchiveApi } from './people.js?v=20261030i';
 
 const DEFAULT_SETTINGS = { id: 1, status: 'setup', match_format: 'best_of_3' };
 

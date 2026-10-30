@@ -1,9 +1,9 @@
 import { ORGANIZER_EMAIL } from './config.js';
 import { createBackend, isConfigured } from './backend.js?v=20261030h';
 import { generateRoundRobin } from './scheduler.js';
-import { computeRankings, gamesWon, gameWinner } from './ranking.js?v=20261029p';
-import { exportExcel, printReport } from './export.js';
-import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog } from './people.js?v=20261030h';
+import { computeRankings, gamesWon, gameWinner, WALKOVER, isWalkover, walkoverSide } from './ranking.js?v=20261030i';
+import { exportExcel, printReport } from './export.js?v=20261030i';
+import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog, staleSaved, staleNoteHtml } from './people.js?v=20261030i';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
 const FORMATS = {
@@ -232,6 +232,7 @@ function renderStatus() {
                  <summary class="btn">更多管理</summary>
                  <div class="more-menu">
                    ${!isSetup() ? `<button class="btn" data-action="save-results" ${busy}>🏅 存入選手成績（冠亞季軍）</button>` : ''}
+                   ${!isSetup() ? `<button class="btn" data-action="withdraw" ${busy}>🚪 隊伍退賽（棄權）</button>` : ''}
                    ${!isSetup() ? `<button class="btn" data-action="reset" ${busy}>重設賽程（保留名單）</button>` : ''}
                    <button class="btn" data-action="change-password">變更密碼</button>
                    <button class="btn danger" data-action="wipe" ${busy}>清除全部資料</button>
@@ -293,12 +294,24 @@ function podiumHtml(rankings) {
     </div>`;
 }
 
+// 主辦專用：這個組別已存入的成績和目前名次不一樣時提醒重新存入（比分存入後又被修改）
+function staleHtml(rankings) {
+  if (!isOrganizer()) return '';
+  const ms = divisionMatches(state.division);
+  if (!ms.length || ms.some((m) => m.status !== 'completed')) return '';
+  const top = rankings.filter((s) => s.rank <= 3);
+  if (top.some((s) => s.drawTied && s.drawBad)) return '';
+  const current = top.flatMap((s) => [{ name: s.team.player_a, place: s.rank }, { name: s.team.player_b, place: s.rank }]);
+  return staleNoteHtml(staleSaved(state.results, 'doubles', state.division, current));
+}
+
 function renderRankings(rankings) {
   if (!rankings.length) return emptyState('這個組別還沒有隊伍。');
   const org = isOrganizer();
   const needDraw = rankings.some((s) => s.drawTied && s.drawBad);
   return `
     ${myTeamPicker()}
+    ${staleHtml(rankings)}
     ${needDraw && org ? `<div class="banner warn">有隊伍戰績完全相同，請由主辦單位現場抽籤，再在「抽籤」欄填入順位（1～同分隊數，不可重複）。</div>` : ''}
     ${podiumHtml(rankings)}
     <div class="table-wrap">
@@ -398,11 +411,12 @@ function matchCard(m, mine, org) {
   const isMine = mine && (m.team1_id === mine || m.team2_id === mine);
   const games = m.games || [];
   // 每隊一列：隊名、各局得分（贏的局加粗）、總局數
+  const wo = walkoverSide(games);
   const side = (id, wins, idx) => `
     <span class="side ${m.winner_id === id ? 'won' : ''} ${id === mine ? 'me' : ''}">
       <span class="name">${pairAvatars(teamById(id), 'xs')}<span>${esc(teamName(id))}</span></span>
-      <span class="pts">${games.map((g) => `<span class="pt ${gameWinner(g) === idx + 1 ? 'w' : ''}">${Number(g[idx])}</span>`).join('')}</span>
-      <span class="score">${m.status === 'not_started' ? '' : wins}</span>
+      <span class="pts">${wo ? '' : games.map((g) => `<span class="pt ${gameWinner(g) === idx + 1 ? 'w' : ''}">${Number(g[idx])}</span>`).join('')}</span>
+      <span class="score">${wo ? (wo === idx + 1 ? '棄權' : '勝') : m.status === 'not_started' ? '' : wins}</span>
     </span>`;
   const tag = org ? 'button' : 'div';
   const attrs = org ? `data-action="open-match" data-id="${m.id}" type="button" aria-label="輸入比分：${esc(teamName(m.team1_id))} 對 ${esc(teamName(m.team2_id))}"` : '';
@@ -428,6 +442,7 @@ function renderMatrix(rankings) {
     const mineWins = gamesWon(m.games, side);
     const theirWins = gamesWon(m.games, side === 1 ? 2 : 1);
     if (m.status === 'playing') return `<td class="playing">${mineWins}:${theirWins}<small>進行中</small></td>`;
+    if (walkoverSide(m.games)) return `<td class="${m.winner_id === row.id ? 'win' : 'loss'}">${m.winner_id === row.id ? '勝' : '棄權'}</td>`;
     return `<td class="${m.winner_id === row.id ? 'win' : 'loss'}">${mineWins}:${theirWins}</td>`;
   };
   return `
@@ -640,8 +655,8 @@ function archiveSnapshot(division) {
       round: `第 ${m.round} 輪`,
       p1: teamName(m.team1_id),
       p2: teamName(m.team2_id),
-      score: `${gamesWon(m.games, 1)} : ${gamesWon(m.games, 2)}`,
-      games: (m.games || []).map((g) => `${g[0]}:${g[1]}`).join('、'),
+      score: walkoverSide(m.games) ? '棄權勝' : `${gamesWon(m.games, 1)} : ${gamesWon(m.games, 2)}`,
+      games: walkoverSide(m.games) ? '棄權' : (m.games || []).map((g) => `${g[0]}:${g[1]}`).join('、'),
       winner: m.winner_id ? teamName(m.winner_id) : '',
     })),
   };
@@ -713,7 +728,7 @@ function openTeamProfile(teamId, focusSide) {
         const gw = gamesWon(m.games, mine);
         const gl = gamesWon(m.games, mine === 1 ? 2 : 1);
         const done = m.status === 'completed';
-        return `<li class="${done ? (m.winner_id === t.id ? 'w' : 'l') : 'live'}"><span>vs ${esc(teamName(opp))}</span><b>${gw} : ${gl}</b><em>${done ? (m.winner_id === t.id ? '勝' : '敗') : '進行中'}</em></li>`;
+        return `<li class="${done ? (m.winner_id === t.id ? 'w' : 'l') : 'live'}"><span>vs ${esc(teamName(opp))}</span><b>${walkoverSide(m.games) ? (m.winner_id === t.id ? '對手棄權' : '棄權') : `${gw} : ${gl}`}</b><em>${done ? (m.winner_id === t.id ? '勝' : '敗') : '進行中'}</em></li>`;
       }).join('')}</ul>` : '<p class="note">還沒有比賽紀錄。</p>'}
     </div>`,
   () => {});
@@ -723,7 +738,8 @@ function openScoreModal(match) {
   const fmt = formatOf(match);
   const name1 = teamName(match.team1_id);
   const name2 = teamName(match.team2_id);
-  const saved = (match.games || []).filter(Array.isArray);
+  const woNow = walkoverSide(match.games);
+  const saved = (match.games || []).filter((g) => Array.isArray(g) && !isWalkover(g));
   const cellValue = (i, side) => (saved[i] ? String(saved[i][side]) : '');
   const scoreInput = (i, side, label) =>
     `<input class="pt-input" type="number" inputmode="numeric" min="0" max="99" data-game="${i}" data-side="${side}" value="${cellValue(i, side)}" aria-label="第 ${i + 1} 局 ${esc(label)} 得分">`;
@@ -742,7 +758,11 @@ function openScoreModal(match) {
            <span class="row-note" aria-live="polite"></span>
          </div>`).join('')}
      </div>
-     <p class="score-result"></p>
+     <p class="score-result">${woNow ? `目前判定：<b>${esc(woNow === 1 ? name1 : name2)}</b> 棄權，${esc(woNow === 1 ? name2 : name1)} 直接獲勝。` : ''}</p>
+     <div class="modal-actions wo-actions">
+       <button type="button" class="btn" data-wo="1">${esc(name1)} 棄權</button>
+       <button type="button" class="btn" data-wo="2">${esc(name2)} 棄權</button>
+     </div>
      <div class="modal-actions">
        <button type="button" class="btn" data-clear>清除比分</button>
        <button type="button" class="btn" data-close>取消</button>
@@ -798,8 +818,16 @@ function openScoreModal(match) {
         modal.querySelector('.score-total').textContent = `${w1} : ${w2}`;
         modal.querySelector('.score-result').innerHTML = decided
           ? `🏆 勝方：<b>${esc(w1 > w2 ? name1 : name2)}</b>`
-          : games.length ? '比賽進行中，可先儲存目前比分。' : '';
+          : games.length ? '比賽進行中，可先儲存目前比分。'
+          : woNow ? `目前判定：<b>${esc(woNow === 1 ? name1 : name2)}</b> 棄權，${esc(woNow === 1 ? name2 : name1)} 直接獲勝。` : '';
       };
+      // 棄權：對手直接獲勝，只算勝負，不計局數與得失分
+      modal.querySelectorAll('[data-wo]').forEach((btn) => btn.addEventListener('click', async () => {
+        const side = Number(btn.dataset.wo);
+        close();
+        await run(() => backend.saveMatch(match.id, { games: [WALKOVER[side]], winner_id: side === 1 ? match.team2_id : match.team1_id, status: 'completed' }), '已判定棄權');
+        await reload();
+      }));
 
       modal.querySelector('.game-rows').addEventListener('input', draw);
       // 按 Enter 跳到下一格，方便連續輸入
@@ -911,6 +939,33 @@ const actions = {
   'person-profile': ({ id, side }) => openTeamProfile(id, side),
   'pick-team': () => pickTeam(),
   'save-results': saveResults,
+  // 隊伍退賽：這個組別裡這隊還沒打完的對戰，全部判對手直接獲勝（已打完的比分保留）
+  withdraw: () => {
+    const teams = state.teams.filter((t) => t.division === state.division);
+    openModal(
+      `<h2>隊伍退賽</h2>
+       <p class="note">選手受傷或臨時離場時使用：這隊還沒打完的對戰會判對手直接獲勝（棄權只計勝負，不計局數與得失分）；已打完的比分會保留。之後也可以在單場比分視窗按「棄權」。</p>
+       <label>退賽的隊伍<select name="team">${teams.map((t) => `<option value="${t.id}">${esc(t.player_a)} & ${esc(t.player_b)}</option>`).join('')}</select></label>
+       <p class="error" hidden></p>
+       <div class="modal-actions"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn danger" data-go>判定退賽</button></div>`,
+      (modal, close) => {
+        modal.querySelector('[data-go]').addEventListener('click', async () => {
+          const id = modal.querySelector('[name="team"]').value;
+          const todo = divisionMatches(state.division).filter((m) => m.status !== 'completed' && (m.team1_id === id || m.team2_id === id));
+          const err = modal.querySelector('.error');
+          if (!todo.length) { err.textContent = '這隊沒有待打的對戰。'; err.hidden = false; return; }
+          close();
+          await run(async () => {
+            for (const m of todo) {
+              const side = m.team1_id === id ? 1 : 2;
+              await backend.saveMatch(m.id, { games: [WALKOVER[side]], winner_id: side === 1 ? m.team2_id : m.team1_id, status: 'completed' });
+            }
+          }, `已判定 ${teamName(id)} 退賽（${todo.length} 場）`);
+          await reload();
+        });
+      }
+    );
+  },
   'edit-team': ({ id }) => {
     const team = teamById(id);
     if (team) pickTeam(team);
