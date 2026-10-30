@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ORGANIZER_EMAIL } from './config.js';
-import { peopleApi, demoPeopleApi, resultsApi, demoResultsApi } from './people.js';
+import { peopleApi, demoPeopleApi, resultsApi, demoResultsApi, archiveApi, demoArchiveApi } from './people.js?v=20261030h';
 
 const DEFAULT_SETTINGS = { id: 1, status: 'setup', match_format: 'best_of_3' };
 
@@ -42,6 +42,7 @@ async function createSupabaseBackend() {
   };
   const people = peopleApi(sb);
   const results = resultsApi(sb);
+  const archive = archiveApi(sb);
   const updateSettings = async (patch) =>
     mustAffect(await sb.from('settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1).select());
 
@@ -102,7 +103,12 @@ async function createSupabaseBackend() {
       mustAffect(await sb.from('teams').update(patch).eq('id', id).select());
     },
     // 把冠、亞、季軍存入選手歷年成績（同一比賽、組別、年度會整批取代）
-    async saveResults(system, division, year, event, rows) { await results.replace(system, division, year, event, rows); },
+    // 成績存入後再封存完整結果；封存失敗（例如還沒建立資料表）不影響成績，回傳 archived: false 讓畫面提醒
+    async saveResults(system, division, year, event, rows, snapshot) {
+      await results.replace(system, division, year, event, rows);
+      if (!snapshot) return { archived: false };
+      try { await archive.replace(system, division, year, event, snapshot); return { archived: true }; } catch { return { archived: false }; }
+    },
     async deleteTeam(id) {
       mustAffect(await sb.from('teams').delete().eq('id', id).select());
     },
@@ -150,6 +156,7 @@ function createDemoBackend() {
     DEMO_PEOPLE[name] = { name, unit: ['台中市體育會', '高雄市桌球隊', '桃園市桌球隊'][i % 3], title: '選手', photo_url: null };
   });
   const peopleDemo = demoPeopleApi(DEMO_PEOPLE);
+  const archiveDemo = demoArchiveApi();
   const resultsDemo = demoResultsApi([
     { name: '王小明', year: 2025, system: 'doubles', division: 'competitive', place: 1, detail: '與 李大華 搭檔' },
     { name: '李大華', year: 2025, system: 'doubles', division: 'competitive', place: 1, detail: '與 王小明 搭檔' },
@@ -212,7 +219,7 @@ function createDemoBackend() {
       emit();
     },
     // 把冠、亞、季軍存入選手歷年成績（同一比賽、組別、年度會整批取代）
-    async saveResults(system, division, year, event, rows) { requireOrganizer(); await resultsDemo.replace(system, division, year, event, rows); emit(); },
+    async saveResults(system, division, year, event, rows, snapshot) { requireOrganizer(); await resultsDemo.replace(system, division, year, event, rows); if (snapshot) await archiveDemo.replace(system, division, year, event, snapshot); emit(); return { archived: !!snapshot }; },
     async deleteTeam(id) {
       requireOrganizer();
       db.teams = db.teams.filter((t) => t.id !== id);

@@ -1,9 +1,9 @@
 import { ORGANIZER_EMAIL } from './config.js';
-import { createBackend, isConfigured } from './backend.js?v=20261029o';
+import { createBackend, isConfigured } from './backend.js?v=20261030h';
 import { generateRoundRobin } from './scheduler.js';
 import { computeRankings, gamesWon, gameWinner } from './ranking.js?v=20261029p';
 import { exportExcel, printReport } from './export.js';
-import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog } from './people.js';
+import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog } from './people.js?v=20261030h';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
 const FORMATS = {
@@ -604,19 +604,47 @@ function saveResults() {
     openModal,
     summary: `${list}${notReady.length ? `\n\n（略過：${notReady.join('；')}）` : ''}`,
     onConfirm: async ({ year, event }) => {
+      let archived = true;
       const ok = await run(async () => {
         for (const r of ready) {
           const rows = r.top.flatMap((s) => [
             { name: s.team.player_a, place: s.rank, detail: `與 ${s.team.player_b} 搭檔` },
             { name: s.team.player_b, place: s.rank, detail: `與 ${s.team.player_a} 搭檔` },
           ]);
-          await backend.saveResults('doubles', r.division, year, event, rows);
+          const res = await backend.saveResults('doubles', r.division, year, event, rows, archiveSnapshot(r.division));
+          if (res?.archived === false) archived = false;
         }
-      }, `已存入「${event}」冠亞季軍`);
-      if (ok) await reload();
+      });
+      if (ok) {
+        toast(archived ? `已存入「${event}」冠亞季軍，並封存完整結果` : '成績已存入，但完整結果沒有封存成功（請主辦在 Supabase 執行 supabase/archive.sql）', archived ? 'ok' : 'error');
+        await reload();
+      }
       return ok;
     },
   });
+}
+
+// 賽事封存：這個組別的排名表與每場比分（整理成英雄榜可以直接顯示的格式）
+function archiveSnapshot(division) {
+  const ranks = computeRankings(state.teams, state.matches, division);
+  return {
+    formatLabel: `雙打單循環賽・${(FORMATS[state.settings.match_format] || FORMATS.best_of_3).label}`,
+    placings: ranks.filter((s) => s.rank <= 3).map((s) => ({ place: s.rank, name: `${s.team.player_a} & ${s.team.player_b}` })),
+    tables: [{
+      title: '循環賽排名',
+      head: ['名次', '隊伍', '出賽', '勝', '敗', '局數', '得失分', '判定依據'],
+      rows: ranks.map((s) => [s.rank, `${s.team.player_a} & ${s.team.player_b}`, s.played, s.wins, s.losses, `${s.gamesWon}:${s.gamesLost}`, `${s.pointsWon}:${s.pointsLost}`, s.basis]),
+    }],
+    matches: divisionMatches(division).filter((m) => m.status !== 'not_started').map((m) => ({
+      stage: '循環賽',
+      round: `第 ${m.round} 輪`,
+      p1: teamName(m.team1_id),
+      p2: teamName(m.team2_id),
+      score: `${gamesWon(m.games, 1)} : ${gamesWon(m.games, 2)}`,
+      games: (m.games || []).map((g) => `${g[0]}:${g[1]}`).join('、'),
+      winner: m.winner_id ? teamName(m.winner_id) : '',
+    })),
+  };
 }
 
 // 從選手資料庫挑 2 位選手組成一組雙打；傳入 team 就是修改這一組的選手
