@@ -274,6 +274,25 @@ function myTeamPicker() {
     </div>`;
 }
 
+// 前三名頒獎台：兩位選手的照片並排；前三名都已比過賽、且沒有未抽籤的同分時才顯示
+function podiumHtml(rankings) {
+  const top = rankings.slice(0, 3);
+  if (top.length < 3 || top.some((s) => !s.played || (s.drawTied && s.drawBad))) return '';
+  return `
+    <div class="podium">
+      ${[1, 0, 2].map((i) => {
+        const s = top[i];
+        return `
+          <button type="button" class="pod pod-${i + 1} ${s.team.id === state.myTeam ? 'mine' : ''}" data-action="team-profile" data-id="${s.team.id}">
+            <span class="pod-photo n2"><span class="rank-badge r${i + 1}">${i + 1}</span>${avatar(personOf(s.team, 'a'), 'cover')}${avatar(personOf(s.team, 'b'), 'cover')}</span>
+            <span class="pod-name">${esc(s.team.player_a)} & ${esc(s.team.player_b)}</span>
+            ${unitsOf(s.team) ? `<span class="pod-unit">${unitsOf(s.team)}</span>` : ''}
+            <span class="xp">${s.wins} 勝 ${s.losses} 敗</span>
+          </button>`;
+      }).join('')}
+    </div>`;
+}
+
 function renderRankings(rankings) {
   if (!rankings.length) return emptyState('這個組別還沒有隊伍。');
   const org = isOrganizer();
@@ -281,6 +300,7 @@ function renderRankings(rankings) {
   return `
     ${myTeamPicker()}
     ${needDraw && org ? `<div class="banner warn">有隊伍戰績完全相同，請由主辦單位現場抽籤，再在「抽籤」欄填入順位（1～同分隊數，不可重複）。</div>` : ''}
+    ${podiumHtml(rankings)}
     <div class="table-wrap">
       <table class="rank-table">
         <thead><tr><th>名次</th><th class="left">隊伍</th><th>勝</th><th>敗</th><th>局數</th><th class="hide-sm">得失分</th><th class="left hide-sm">判定依據</th></tr></thead>
