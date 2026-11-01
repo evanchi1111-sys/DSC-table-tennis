@@ -169,7 +169,7 @@ function renderHeader() {
         <div class="brand">
           <img class="brand-logo" src="img/logo-glow-96.png" srcset="img/logo-glow-96.png 1x, img/logo-glow-192.png 2x" width="46" height="46" alt="中龍鋼鐵">
           <div>
-            <h1>中龍鋼鐵 桌球雙打賽即時計分</h1>
+            <h1>中龍鋼鐵桌球社 雙打賽即時計分</h1>
             ${
               state.live
                 ? `<p class="live"><span class="dot" aria-hidden="true"></span>比分自動即時更新</p>`
