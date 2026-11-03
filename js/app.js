@@ -4,7 +4,7 @@ import { generateRoundRobin } from './scheduler.js';
 import { computeRankings, gamesWon, gameWinner, WALKOVER, isWalkover, walkoverSide } from './ranking.js?v=20261030i';
 import { exportExcel, printReport } from './export.js?v=20261030i';
 import { loadDesk, syncDesk, fillTables, assign as deskAssign, release as deskRelease, renderDesk } from './desk.js?v=20261103d';
-import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog, staleSaved, staleNoteHtml } from './people.js?v=20261030i';
+import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog, staleSaved, staleNoteHtml, savedBatch, lockedNoteHtml } from './people.js?v=20261103a';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
 const FORMATS = {
@@ -72,6 +72,21 @@ const isStandardGame = (a, b) => {
 };
 const statusLabel = (m) => ({ completed: '已完賽', playing: '進行中', not_started: '未開始' })[m.status] || '未開始';
 const divisionMatches = (division) => state.matches.filter((m) => m.division === division);
+
+// 存入選手成績＝這次比賽已結束：存入的名次和目前名次相同時，該組別的比分與賽程都鎖定
+const lockedBatch = (division) => {
+  const ms = divisionMatches(division);
+  if (!ms.length || ms.some((m) => m.status !== 'completed')) return null;
+  const top = computeRankings(state.teams, state.matches, division).filter((s) => s.rank <= 3);
+  if (top.some((s) => s.drawTied && s.drawBad)) return null;
+  const current = top.flatMap((s) => [{ name: s.team.player_a, place: s.rank }, { name: s.team.player_b, place: s.rank }]);
+  return savedBatch(state.results, 'doubles', division, current);
+};
+const anyLocked = () => Object.keys(DIVISIONS).map(lockedBatch).find(Boolean) || null;
+function guardLocked(batch) {
+  if (batch) toast(`「${batch.event || '這場比賽'}」的成績已存入，比賽已結束，不能再修改。如需修正，請先到「選手資料庫」撤銷這一批成績。`, 'error');
+  return !!batch;
+}
 
 let toastTimer;
 function toast(message, kind = 'info') {
@@ -283,8 +298,8 @@ function renderStatus() {
             ? `<details class="more">
                  <summary class="btn">更多管理</summary>
                  <div class="more-menu">
-                   ${!isSetup() ? `<button class="btn" data-action="save-results" ${busy}>🏅 存入選手成績（冠亞季軍）</button>` : ''}
-                   ${!isSetup() ? `<button class="btn" data-action="reset" ${busy}>重設賽程（保留名單）</button>` : ''}
+                   ${!isSetup() && !lockedBatch(state.division) ? `<button class="btn" data-action="save-results" ${busy}>🏅 存入選手成績（冠亞季軍）</button>` : ''}
+                   ${!isSetup() && !anyLocked() ? `<button class="btn" data-action="reset" ${busy}>重設賽程（保留名單）</button>` : ''}
                    <button class="btn" data-action="change-password">變更密碼</button>
                    <button class="btn danger" data-action="wipe" ${busy}>清除全部資料</button>
                  </div>
@@ -358,11 +373,12 @@ function staleHtml(rankings) {
 
 function renderRankings(rankings) {
   if (!rankings.length) return emptyState('這個組別還沒有隊伍。');
-  const org = isOrganizer();
+  const locked = lockedBatch(state.division);
+  const org = isOrganizer() && !locked;
   const needDraw = rankings.some((s) => s.drawTied && s.drawBad);
   return `
     ${myTeamPicker()}
-    ${staleHtml(rankings)}
+    ${isOrganizer() && locked ? lockedNoteHtml(locked) : staleHtml(rankings)}
     ${needDraw && org ? `<div class="banner warn">有隊伍戰績完全相同，請由主辦單位現場抽籤，再在「抽籤」欄填入順位（1～同分隊數，不可重複）。</div>` : ''}
     ${podiumHtml(rankings)}
     <div class="table-wrap">
@@ -436,10 +452,12 @@ function renderMatches() {
   const mine = state.myTeam && teamById(state.myTeam)?.division === state.division ? state.myTeam : '';
   const shown = mine && state.onlyMine ? matches.filter((m) => m.team1_id === mine || m.team2_id === mine) : matches;
   const rounds = [...new Set(shown.map((m) => m.round))].sort((a, b) => a - b);
-  const org = isOrganizer();
+  const locked = lockedBatch(state.division);
+  const org = isOrganizer() && !locked;
   const next = mine ? matches.find((m) => m.status !== 'completed' && (m.team1_id === mine || m.team2_id === mine)) : null;
 
   return `
+    ${isOrganizer() && locked ? lockedNoteHtml(locked) : ''}
     <div class="picker-row">
       ${myTeamPicker()}
       ${mine ? `<label class="check"><input type="checkbox" data-change="only-mine" ${state.onlyMine ? 'checked' : ''}> 只看我的比賽</label>` : ''}
@@ -786,6 +804,7 @@ function openTeamProfile(teamId, focusSide) {
 }
 
 function openScoreModal(match) {
+  if (guardLocked(lockedBatch(match.division))) return;
   const fmt = formatOf(match);
   const name1 = teamName(match.team1_id);
   const name2 = teamName(match.team2_id);
@@ -945,11 +964,13 @@ const actions = {
     });
   },
   reset: () => {
+    if (guardLocked(anyLocked())) return;
     if (!confirm('重設賽程會清除所有比分與賽程，但保留隊伍名單。確定嗎？')) return;
     if (!confirm('再次確認：清除後無法復原。')) return;
     run(() => backend.resetTournament(), '賽程已清除，回到籌備階段').then(reload);
   },
   wipe: () => {
+    if (guardLocked(anyLocked())) return;
     if (!confirm('⚠️ 這會刪除「所有隊伍、賽程與比分」。確定嗎？')) return;
     if (!confirm('最後確認：全部資料將無法復原。')) return;
     run(() => backend.wipeAll(), '全部資料已清除').then(reload);
@@ -1055,6 +1076,7 @@ app.addEventListener('change', (e) => {
     store.set('onlyMine', el.checked ? '1' : '');
     render();
   } else if (el.dataset.change === 'draw-rank') {
+    if (guardLocked(lockedBatch(state.division))) { render(); return; }
     const value = el.value ? Number(el.value) : null;
     el.blur();
     run(() => backend.updateTeam(el.dataset.id, { draw_rank: value }), '抽籤順位已更新').then(reload);
