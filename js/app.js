@@ -3,6 +3,7 @@ import { createBackend, isConfigured } from './backend.js?v=20261030h';
 import { generateRoundRobin } from './scheduler.js';
 import { computeRankings, gamesWon, gameWinner, WALKOVER, isWalkover, walkoverSide } from './ranking.js?v=20261030i';
 import { exportExcel, printReport } from './export.js?v=20261030i';
+import { loadDesk, syncDesk, fillTables, assign as deskAssign, release as deskRelease, renderDesk } from './desk.js?v=20261103d';
 import { avatar, titleChip, profileOf, openPeoplePicker, resultsHtml, PLACE_LABEL, openSaveResultsDialog, staleSaved, staleNoteHtml } from './people.js?v=20261030i';
 
 const DIVISIONS = { competitive: '競賽組', fun: '歡樂成長組' };
@@ -37,7 +38,11 @@ const state = {
   section: SECTIONS[store.get('section')] ? store.get('section') : 'rankings',
   myTeam: store.get('myTeam', ''),
   onlyMine: store.get('onlyMine', '') === '1',
+  view: store.get('view', '') === 'desk' ? 'desk' : 'main',
 };
+
+const desk = loadDesk(store.get('desk', ''));
+const saveDesk = () => store.set('desk', JSON.stringify(desk));
 
 const app = document.getElementById('app');
 const modalRoot = document.getElementById('modal-root');
@@ -134,12 +139,55 @@ app.addEventListener('focusout', () => {
 
 // ---------------------------------------------------------------- 畫面
 
+// ---------------------------------------------------------------- 記分台（球桌場地圖＋待賽清單）
+
+// 把兩個組別所有的對戰整理成記分台的「項目」；參賽者用選手姓名，同一人不會同時在兩張桌上
+const deskInfos = () => {
+  const map = new Map();
+  for (const m of state.matches) {
+    const t1 = teamById(m.team1_id);
+    const t2 = teamById(m.team2_id);
+    if (!t1 || !t2) continue;
+    map.set(m.id, {
+      key: m.id, div: m.division, round: m.round, match: m,
+      ids: [t1.player_a, t1.player_b, t2.player_a, t2.player_b],
+      playable: m.status !== 'completed',
+      done: m.status === 'completed',
+    });
+  }
+  return map;
+};
+const deskVs = (it) => [it.match.team1_id, it.match.team2_id].map((id) => `<span class="dk-p">${pairAvatars(teamById(id), 'xs')}<b>${esc(teamName(id))}</b></span>`).join('<i>vs</i>');
+const deskScore = (it) => (it.match.games?.length ? `${gamesWon(it.match.games, 1)} : ${gamesWon(it.match.games, 2)}` : '');
+function renderDeskView() {
+  if (isSetup()) return emptyState('尚未開賽，產生賽程後才能使用記分台。');
+  const infos = deskInfos();
+  const freed = syncDesk(desk, infos);
+  if (freed.length && desk.auto) fillTables(desk, infos);
+  if (freed.length) saveDesk();
+  return renderDesk(desk, infos, {
+    esc, nameOf: (id) => id, vsHtml: deskVs, divisions: DIVISIONS,
+    divisionLabel: (d) => DIVISIONS[d], labelOf: (it) => `第 ${it.round} 輪`, scoreOf: deskScore,
+  });
+}
+
 function render() {
   document.dispatchEvent(new CustomEvent('site-organizer', { detail: isOrganizer() })); // 只有主辦看得到共用導覽列
   if (!state.loaded) {
     app.innerHTML = state.error
       ? `<div class="center-card"><h2>無法讀取賽事資料</h2><p>${esc(state.error)}</p><button class="btn primary" data-action="retry">重新載入</button></div>`
       : `<div class="center-card"><div class="spinner" aria-hidden="true"></div><p>載入賽事資料中…</p></div>`;
+    return;
+  }
+  if (state.view === 'desk' && isOrganizer()) {
+    app.innerHTML = `
+      ${renderHeader()}
+      <main class="container view-desk">
+        ${state.error ? `<div class="banner error">⚠️ 與資料庫連線異常：${esc(state.error)}（畫面可能不是最新）</div>` : ''}
+        ${demo ? `<div class="banner demo">🧪 示範模式：資料只存在這個分頁，重新整理就會還原。</div>` : ''}
+        <div class="dk-top"><button type="button" class="btn" data-action="desk-close">← 返回賽程</button><h2>🏓 記分台</h2></div>
+        ${renderDeskView()}
+      </main>`;
     return;
   }
   const rankings = computeRankings(state.teams, state.matches, state.division);
@@ -226,6 +274,7 @@ function renderStatus() {
 
       <div class="actions">
         ${org && isSetup() ? `<button class="btn primary" data-action="start" ${canStart && !state.busy ? '' : 'disabled'}>產生賽程並開賽</button>` : ''}
+        ${org && !isSetup() ? `<button class="btn primary" data-action="desk-open">🏓 記分台</button>` : ''}
         <button class="btn" data-action="export-excel">匯出 Excel</button>
         <button class="btn" data-action="print">列印成績</button>
         <button class="btn" data-action="copy-link">複製網址</button>
@@ -922,6 +971,46 @@ const actions = {
       prompt('請複製這個網址：', url);
     }
   },
+  'desk-open': () => { state.view = 'desk'; store.set('view', 'desk'); render(); window.scrollTo(0, 0); },
+  'desk-close': () => { state.view = 'main'; store.set('view', 'main'); render(); window.scrollTo(0, 0); },
+  'desk-score': ({ table }) => {
+    const it = deskInfos().get(desk.assign[table]);
+    if (it) openScoreModal(it.match);
+  },
+  'desk-assign': ({ table, key }) => {
+    const it = deskInfos().get(key);
+    if (!it || desk.assign[table]) return;
+    deskAssign(desk, Number(table), it);
+    saveDesk();
+    render();
+  },
+  'desk-release': ({ table }) => { deskRelease(desk, table, { undo: true }); saveDesk(); render(); },
+  'desk-fill': () => {
+    const { placed, tired } = fillTables(desk, deskInfos());
+    saveDesk();
+    render();
+    toast(placed ? `已排入 ${placed} 場${tired ? `（其中 ${tired} 場有選手剛打完）` : ''}` : '沒有可以排的場次');
+  },
+  'desk-fill-one': ({ table }) => {
+    const { placed, tired } = fillTables(desk, deskInfos(), [Number(table)]);
+    saveDesk();
+    render();
+    if (placed && tired) toast('這場有選手剛打完，沒有更適合的選擇');
+  },
+  'desk-pin': ({ key }) => {
+    desk.pins = desk.pins.includes(key) ? desk.pins.filter((k) => k !== key) : [...desk.pins, key];
+    saveDesk();
+    render();
+  },
+  'desk-filter': ({ value }) => { desk.filter = value; saveDesk(); render(); },
+  'desk-reset': () => {
+    if (!confirm('重設桌況會清空所有球桌與出賽紀錄（不會動到比分）。確定嗎？')) return;
+    desk.assign = {};
+    desk.history = [];
+    desk.pins = [];
+    saveDesk();
+    render();
+  },
   'open-match': ({ id }) => {
     const match = state.matches.find((m) => m.id === id);
     if (match && isOrganizer()) openScoreModal(match);
@@ -950,7 +1039,13 @@ app.addEventListener('click', (e) => {
 app.addEventListener('change', (e) => {
   const el = e.target.closest('[data-change]');
   if (!el) return;
-  if (el.dataset.change === 'my-team') {
+  if (el.dataset.change === 'desk-set') {
+    const field = el.dataset.field;
+    desk[field] = field === 'auto' ? el.checked : Number(el.value);
+    if (field === 'tables') for (const n of Object.keys(desk.assign)) if (Number(n) > desk.tables) delete desk.assign[n];
+    saveDesk();
+    render();
+  } else if (el.dataset.change === 'my-team') {
     state.myTeam = el.value;
     store.set('myTeam', el.value);
     el.blur();
